@@ -1,0 +1,15 @@
+{
+  "name": "musicplayer-server",
+  "version": "1.0.0",
+  "description": "Proxy server gọi ZingMP3 API cho Android Music Player",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "zingmp3-api-full": "^1.0.14"
+  }
+}

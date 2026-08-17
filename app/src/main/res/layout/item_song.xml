@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Layout cho mỗi bài hát trong RecyclerView -->
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginHorizontal="12dp"
+    android:layout_marginVertical="4dp"
+    app:cardCornerRadius="12dp"
+    app:cardElevation="2dp"
+    style="@style/Widget.Material3.CardView.Filled">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="12dp">
+
+        <!-- Ảnh thumbnail bài hát -->
+        <com.google.android.material.imageview.ShapeableImageView
+            android:id="@+id/ivThumbnail"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:contentDescription="Ảnh bài hát"
+            android:scaleType="centerCrop"
+            android:src="@drawable/ic_music_note"
+            app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Medium" />
+
+        <!-- Tên bài + ca sĩ -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvSongTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textAppearance="?attr/textAppearanceTitleMedium"
+                tools:text="Chạy Ngay Đi" />
+
+            <TextView
+                android:id="@+id/tvArtistName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?android:textColorSecondary"
+                tools:text="Sơn Tùng M-TP" />
+
+        </LinearLayout>
+
+        <!-- Thời lượng bài hát -->
+        <TextView
+            android:id="@+id/tvDuration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="?android:textColorSecondary"
+            tools:text="4:22" />
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

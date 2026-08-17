@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Cần INTERNET để gọi REST API server và stream nhạc -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- FOREGROUND_SERVICE để MusicService chạy khi app ở background -->
+    <!-- TẠI SAO cần Foreground Service? → Android kill background service sau vài phút,
+         nhưng music player cần chạy liên tục khi user chuyển app khác -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- Android 13+ yêu cầu permission riêng để hiện notification -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MusicPlayer"
+        android:usesCleartextTraffic="true">
+        <!-- TẠI SAO cần usesCleartextTraffic="true"?
+             → Android 9+ (API 28) MẶC ĐỊNH chặn HTTP (cleartext) vì lý do bảo mật
+             → Server dev chạy trên localhost:3000 chỉ có HTTP (không HTTPS)
+             → Bật cờ này để app gọi được http://10.0.2.2:3000 khi dev
+             → Khi deploy lên Render (HTTPS) thì không ảnh hưởng, vẫn an toàn
+             → LƯU Ý: với production nên dùng network_security_config.xml thay vì bật toàn bộ
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- MusicService — phát nhạc nền với notification -->
+        <service
+            android:name=".service.MusicService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+    </application>
+
+</manifest>
