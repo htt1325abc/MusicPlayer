@@ -120,9 +120,12 @@ Kết quả mong đợi: thấy dòng `host-15 tcp:3000 tcp:3000`.
 
 ## 6. Chạy app
 
+> ℹ️ **Launcher hiện tại là `HomeActivity`** (màn hình chính — danh sách playlist/thể loại, có Koin DI).
+> `MainActivity` (màn hình tìm kiếm cũ) chỉ mở được từ nút search trên Home.
+
 ```powershell
 $sdk = "C:\Users\LENOVO\AppData\Local\Android\Sdk"
-& "$sdk\platform-tools\adb.exe" shell am start -n com.example.musicplayer/.MainActivity
+& "$sdk\platform-tools\adb.exe" shell am start -n com.example.musicplayer/.ui.HomeActivity
 ```
 
 App sẽ mở trên emulator. Kiểm tra hoạt động:
@@ -132,8 +135,14 @@ App sẽ mở trên emulator. Kiểm tra hoạt động:
 
 Kết quả mong đợi (app đang ở foreground):
 ```
-mCurrentFocus=Window{... com.example.musicplayer/com.example.musicplayer.MainActivity}
+mCurrentFocus=Window{... com.example.musicplayer/com.example.musicplayer.ui.HomeActivity}
 ```
+
+Kiểm tra app còn sống (không crash):
+```powershell
+& "$sdk\platform-tools\adb.exe" shell pidof com.example.musicplayer
+```
+→ in ra PID (ví dụ `4594`) là app đang chạy. Nếu rỗng → app đã crash.
 
 ---
 
@@ -145,7 +154,7 @@ mCurrentFocus=Window{... com.example.musicplayer/com.example.musicplayer.MainAct
 | 2 | `npm run dev` (trong `server/`) | giữ terminal mở |
 | 3 | `adb reverse tcp:3000 tcp:3000` | bắt buộc sau restart emulator |
 | 4 | `.\gradlew.bat :app:installDebug` | build + cài |
-| 5 | `adb shell am start -n com.example.musicplayer/.MainActivity` | chạy app |
+| 5 | `adb shell am start -n com.example.musicplayer/.ui.HomeActivity` | chạy app |
 
 ---
 
@@ -181,6 +190,78 @@ mCurrentFocus=Window{... com.example.musicplayer/com.example.musicplayer.MainAct
 ### ❌ Lỗi: `adb` không được nhận diện
 - **Nguyên nhân**: adb không nằm trong PATH.
 - **Fix**: dùng đường dẫn đầy đủ `C:\Users\LENOVO\AppData\Local\Android\Sdk\platform-tools\adb.exe` hoặc khai báo `$sdk` như trên.
+
+---
+
+## 8b. Các lỗi BUILD (compile) & cách sửa
+
+> Các lỗi này đã gặp và sửa trong lần nâng cấp app (thêm Koin DI + HomeActivity).
+
+### 🔍 Lệnh kiểm tra lỗi compile nhanh
+```powershell
+cd C:\Users\LENOVO\AndroidStudioProjects\MusicPlayer
+.\gradlew.bat :app:compileDebugKotlin --console=plain   # chỉ compile Kotlin, nhanh
+.\gradlew.bat :app:assembleDebug --console=plain       # build đầy đủ
+```
+
+### ❌ Lỗi: `No value passed for parameter 'onItemClick'`
+- **Nơi gặp**: `MainActivity.kt` (hoặc bất kỳ chỗ tạo `SongAdapter`).
+- **Nguyên nhân**: `SongAdapter` bị đổi constructor → cần **2 callback**: `onItemClick` + `onFavoriteClick` (đều có kiểu `(SongItem, Int) -> Unit`).
+- **Fix**: truyền đủ 2 lambda khi khởi tạo:
+  ```kotlin
+  SongAdapter(
+      { song, _ -> viewModel.playSong(song) },
+      { song, _ -> viewModel.toggleFavorite(song) }
+  )
+  ```
+
+### ❌ Lỗi: `Unresolved reference 'play'` / `'pause'` / `'next'` / `'previous'` (trong MusicPlaybackController)
+- **Nguyên nhân**: `MusicPlaybackController` gọi 4 hàm này nhưng `MusicService` chưa định nghĩa.
+- **Fix**: thêm 4 hàm vào `MusicService.kt` (delegate sang `togglePlayPause()` / `playCurrent()`):
+  ```kotlin
+  fun play()  = if (isPrepared) mediaPlayer?.start()
+  fun pause() = mediaPlayer?.pause()
+  fun next()  = playCurrent()          // chuyển bài kế tiếp
+  fun previous() = playCurrent()       // tùy logic queue
+  ```
+
+### ❌ Lỗi runtime: `NoBeanDefFoundException ... Could not create instance for HomeViewModel`
+- **Nguyên nhân**: class `App.kt` khởi tạo Koin nhưng **thiếu đăng ký module** (ví dụ `serviceModule`).
+- **Fix**: đảm bảo `App.kt` đăng ký **đầy đủ** các module:
+  ```kotlin
+  startKoin { androidContext(this@App)
+      modules(listOf(networkModule, repositoryModule, viewModelModule, serviceModule))
+  }
+  ```
+
+### ❌ Lỗi runtime: `No definition found for type 'MusicPlaybackController'`
+- **Nguyên nhân**: ViewModel inject theo **interface** `PlaybackController` nhưng module chỉ đăng ký **class cụ thể** → Koin không khớp.
+- **Fix**: đăng ký theo interface trong `ServiceModule.kt`:
+  ```kotlin
+  val serviceModule = module {
+      single<PlaybackController> { MusicPlaybackController() }
+  }
+  ```
+
+### ❌ Lỗi: `Unresolved reference 'PlaybackController'` trong ServiceModule
+- **Fix**: thêm import `com.example.musicplayer.service.PlaybackController`.
+
+### ❌ Lỗi: `Cannot infer type ... 'infix' modifier is required` (khi dùng `bind`)
+- **Nơi gặp**: `single { MusicPlaybackController() } bind PlaybackController::class`
+- **Nguyên nhân**: DSL `bind` không tương thích với **Koin 3.5.6** đang dùng → lỗi biên dịch.
+- **Fix**: **bỏ `bind`**, chỉ đăng ký theo interface `single<PlaybackController> { ... }` và trong `BasePlayerActivity` inject interface rồi **cast**:
+  ```kotlin
+  private val playbackController: PlaybackController by inject()
+  ...
+  (playbackController as? MusicPlaybackController)?.service = musicService
+  ```
+  (vì interface không có setter `service` — cần cast sang class cụ thể)
+
+### ❌ Lỗi runtime: Koin `NoBeanDefFoundException` dù đã đăng ký đúng module
+- **Mẹo kiểm tra nhanh**: xem logcat ngay sau khi mở app:
+  ```powershell
+  & "$sdk\platform-tools\adb.exe" logcat -d | Select-String "NoBeanDef|No definition|FATAL|AndroidRuntime"
+  ```
 
 ---
 

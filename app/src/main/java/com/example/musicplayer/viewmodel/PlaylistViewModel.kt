@@ -4,9 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.musicplayer.model.SongItem
 import com.example.musicplayer.repository.MusicRepository
+import com.example.musicplayer.service.PlaybackController
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -17,9 +21,11 @@ import kotlinx.coroutines.launch
  * 2. Bấm vào 1 thể loại  → load bằng `searchSongs(genreName)` (search theo tên)
  *
  * Cũng dùng Koin inject `MusicRepository` qua constructor như HomeViewModel.
+ * PHẦN 1: thêm `PlaybackController` để UI gọi next()/previous() xuống Service.
  */
 class PlaylistViewModel(
-    private val repository: MusicRepository
+    private val repository: MusicRepository,
+    private val playbackController: PlaybackController
 ) : ViewModel() {
 
     // ---- State: Danh sách bài hát ----
@@ -30,12 +36,47 @@ class PlaylistViewModel(
     private val _title = MutableStateFlow<String?>(null)
     val title: StateFlow<String?> = _title.asStateFlow()
 
+    // ---- State: Yêu thích (PHẦN 2: từ ROOM) ----
+    private val _favorites = MutableStateFlow<List<SongItem>>(emptyList())
+    val favoriteIds: StateFlow<Set<String>> = _favorites
+        .map { list -> list.map { it.encodeId }.toSet() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
     // ---- State: Loading / Lỗi ----
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    init {
+        // Quan sát danh sách yêu thích từ Room → cập nhật icon trái tim trên từng dòng
+        observeFavorites()
+    }
+
+    private fun observeFavorites() {
+        viewModelScope.launch {
+            repository.observeFavorites().collect { list ->
+                _favorites.value = list
+            }
+        }
+    }
+
+    /**
+     * Bật/tắt yêu thích 1 bài (ghi vào Room qua repository).
+     */
+    fun toggleFavorite(song: SongItem) {
+        viewModelScope.launch {
+            repository.toggleFavorite(song)
+        }
+    }
+
+    // ---- Điều khiển phát nhạc (PHẦN 1) ----
+    fun next() = playbackController.next()
+
+    fun previous() = playbackController.previous()
+
+    fun togglePlayPause() = playbackController.togglePlayPause()
 
     /**
      * Tải danh sách bài hát trong 1 playlist.

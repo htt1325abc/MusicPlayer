@@ -52,9 +52,15 @@ class SongListActivity : BasePlayerActivity() {
 
         // DÙNG LẠI SongAdapter có sẵn — bấm bài → phát theo cả danh sách (queue)
         // → Service tự phát bài kế tiếp khi bài hiện tại hết (auto-advance)
-        songAdapter = SongAdapter { _, position ->
-            playQueue(playlistViewModel.songs.value, position)
-        }
+        // PHẦN 2: nút trái tim trên mỗi dòng → toggleFavorite (ghi Room qua ViewModel)
+        songAdapter = SongAdapter(
+            onItemClick = { _, position ->
+                playQueue(playlistViewModel.songs.value, position)
+            },
+            onFavoriteClick = { song, _ ->
+                playlistViewModel.toggleFavorite(song)
+            }
+        )
         binding.rvSongs.layoutManager = LinearLayoutManager(this)
         binding.rvSongs.adapter = songAdapter
 
@@ -104,8 +110,29 @@ class SongListActivity : BasePlayerActivity() {
                         binding.tvMessage.text = message
                     }
                 }
+                // Yêu thích (PHẦN 2): cập nhật icon trái tim trên từng dòng
+                launch {
+                    playlistViewModel.favoriteIds.collect { ids ->
+                        songAdapter.updateFavorites(ids)
+                    }
+                }
             }
         }
+    }
+
+    /**
+     * Bấm nút Next trên mini player → xuống Service qua ViewModel (PHẦN 1).
+     * UI nút bấm → onNext() → playlistViewModel.next() → PlaybackController → MusicService.next()
+     */
+    override fun onNext() {
+        playlistViewModel.next()
+    }
+
+    /**
+     * Bấm nút Prev trên mini player → xuống Service qua ViewModel.
+     */
+    override fun onPrevious() {
+        playlistViewModel.previous()
     }
 
     /** Nút back trên toolbar → quay lại màn hình trước */

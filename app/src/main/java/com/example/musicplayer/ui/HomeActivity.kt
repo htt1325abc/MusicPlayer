@@ -47,6 +47,7 @@ class HomeActivity : BasePlayerActivity() {
     private lateinit var genreAdapter: GenreAdapter
     private lateinit var playlistAdapter: PlaylistAdapter
     private lateinit var recentAdapter: RecentSongAdapter
+    private lateinit var favoriteAdapter: RecentSongAdapter
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,15 +62,10 @@ class HomeActivity : BasePlayerActivity() {
         setupMiniPlayer()
         observeViewModel()
 
-        // Load playlist nổi bật + bài gần đây
+        // Load playlist nổi bật từ server.
+        // LƯU Ý (PHẦN 2): "Nghe gần đây" & "Yêu thích" giờ đến từ Room Flow → ViewModel
+        // collect 1 lần trong init, Room TỰ emit lại khi data đổi → không cần load thủ công.
         homeViewModel.loadHome()
-        homeViewModel.loadRecent()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // Khi quay lại Home (sau khi nghe nhạc ở màn hình khác) → cập nhật "Nghe gần đây"
-        homeViewModel.loadRecent()
     }
 
     private fun setupAdapters() {
@@ -112,6 +108,35 @@ class HomeActivity : BasePlayerActivity() {
         )
         binding.rvRecent.layoutManager = LinearLayoutManager(this)
         binding.rvRecent.adapter = recentAdapter
+
+        // ---- Section: Yêu thích (PHẦN 2 - Room) ----
+        // DÙNG LẠI RecentSongAdapter (danh sách SongItem có nút play).
+        // Bấm bài yêu thích → phát theo cả danh sách yêu thích (queue auto-advance).
+        favoriteAdapter = RecentSongAdapter(
+            onSongClick = { _, position ->
+                playQueue(homeViewModel.favorites.value, position)
+            },
+            onPlayClick = { _, position ->
+                playQueue(homeViewModel.favorites.value, position)
+            }
+        )
+        binding.rvFavorites.layoutManager = LinearLayoutManager(this)
+        binding.rvFavorites.adapter = favoriteAdapter
+    }
+
+    /**
+     * Bấm nút Next trên mini player → gọi xuống Service qua ViewModel (PHẦN 1).
+     * Chuỗi: UI nút bấm → onNext() → homeViewModel.next() → PlaybackController → MusicService.next()
+     */
+    override fun onNext() {
+        homeViewModel.next()
+    }
+
+    /**
+     * Bấm nút Prev trên mini player → gọi xuống Service qua ViewModel.
+     */
+    override fun onPrevious() {
+        homeViewModel.previous()
     }
 
     /** Mở SongListActivity với tham số mode + id */
@@ -142,6 +167,16 @@ class HomeActivity : BasePlayerActivity() {
                         recentAdapter.submitList(list)
                         binding.rvRecent.visibility =
                             if (list.isEmpty()) View.GONE else View.VISIBLE
+                    }
+                }
+                // Yêu thích (PHẦN 2 - Room)
+                launch {
+                    homeViewModel.favorites.collect { list ->
+                        favoriteAdapter.submitList(list)
+                        val visible = list.isNotEmpty()
+                        binding.rvFavorites.visibility = if (visible) View.VISIBLE else View.GONE
+                        binding.tvFavoritesHeader.visibility =
+                            if (visible) View.VISIBLE else View.GONE
                     }
                 }
                 // Loading

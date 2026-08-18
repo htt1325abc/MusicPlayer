@@ -22,10 +22,33 @@ import com.example.musicplayer.model.SongItem
  *
  * @param onItemClick callback khi user bấm vào 1 bài hát
  *        (trả cả vị trí trong danh sách để phát theo queue auto-advance)
+ * @param onFavoriteClick callback khi user bấm nút trái tim (PHẦN 2 - Room)
  */
 class SongAdapter(
-    private val onItemClick: (SongItem, Int) -> Unit
+    private val onItemClick: (SongItem, Int) -> Unit,
+    private val onFavoriteClick: (SongItem, Int) -> Unit
 ) : ListAdapter<SongItem, SongAdapter.SongViewHolder>(SongDiffCallback()) {
+
+    // Tập id các bài đang yêu thích — Activity cập nhật khi StateFlow đổi (PHẦN 2)
+    private val favoriteIds = mutableSetOf<String>()
+
+    /**
+     * Cập nhật tập bài yêu thích từ ViewModel (Room Flow).
+     * Chỉ re-bind các dòng có trạng thái yêu thích THAY ĐỔI → RecyclerView không nhấp nháy.
+     */
+    fun updateFavorites(ids: Set<String>) {
+        if (favoriteIds == ids) return
+        val oldIds = favoriteIds.toSet()
+        favoriteIds.clear()
+        favoriteIds.addAll(ids)
+
+        val changedIds = oldIds union ids
+        for (i in 0 until itemCount) {
+            if (getItem(i).encodeId in changedIds) {
+                notifyItemChanged(i)
+            }
+        }
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): SongViewHolder {
         val binding = ItemSongBinding.inflate(
@@ -55,12 +78,25 @@ class SongAdapter(
                     onItemClick(getItem(position), position)
                 }
             }
+            // Nút trái tim yêu thích (PHẦN 2) — bấm → toggleFavorite qua callback
+            binding.btnFavorite.setOnClickListener {
+                val position = bindingAdapterPosition
+                if (position != RecyclerView.NO_POSITION) {
+                    onFavoriteClick(getItem(position), position)
+                }
+            }
         }
 
         fun bind(song: SongItem) {
             binding.tvSongTitle.text = song.title
             binding.tvArtistName.text = song.artistsNames
             binding.tvDuration.text = song.formatDuration()
+
+            // Icon trái tim: đầy (đã thích) / rỗng (chưa thích) theo tập favoriteIds
+            val isFavorite = song.encodeId in favoriteIds
+            binding.btnFavorite.setImageResource(
+                if (isFavorite) R.drawable.ic_favorite else R.drawable.ic_favorite_border
+            )
 
             // Glide load ảnh thumbnail — tự cache, xử lý placeholder khi loading
             Glide.with(binding.root.context)

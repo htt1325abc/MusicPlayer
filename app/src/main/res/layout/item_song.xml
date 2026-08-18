@@ -58,12 +58,24 @@
 
         </LinearLayout>
 
+        <!-- Nút Yêu thích (trái tim) — PHẦN 2 (Room):
+             bấm để thêm/bỏ bài khỏi danh sách yêu thích.
+             Icon đầy/rỗng do SongAdapter đổi theo favoriteIds. -->
+        <ImageButton
+            android:id="@+id/btnFavorite"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Yêu thích"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_favorite_border" />
+
         <!-- Thời lượng bài hát -->
         <TextView
             android:id="@+id/tvDuration"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
+            android:layout_marginStart="4dp"
             android:textAppearance="?attr/textAppearanceBodySmall"
             android:textColor="?android:textColorSecondary"
             tools:text="4:22" />

@@ -15,7 +15,11 @@ import com.bumptech.glide.request.RequestOptions
 import com.example.musicplayer.R
 import com.example.musicplayer.model.SongItem
 import com.example.musicplayer.repository.RecentPlayedStore
+import androidx.lifecycle.lifecycleScope
+import com.example.musicplayer.service.MusicPlaybackController
 import com.example.musicplayer.service.MusicService
+import com.example.musicplayer.service.PlaybackController
+import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
 
 /**
@@ -38,8 +42,18 @@ abstract class BasePlayerActivity : AppCompatActivity() {
     protected var musicService: MusicService? = null
     private var isBound = false
 
-    // "Nghe gần đây" — Koin tự bơm instance singleton (không cần tự new + tự lấy Context)
+    // "Nghe gần đây" — Koin tự bơm instance singleton (Room-backed từ PHẦN 2)
     protected val recentStore: RecentPlayedStore by inject()
+
+    // PlaybackController — Koin singleton (đăng ký theo INTERFACE PlaybackController).
+    // Activity GÁN service vào khi bind xong để ViewModel có thể gọi next()/previous()
+    // xuống Service (PHẦN 1).
+    private val playbackController: PlaybackController by inject()
+
+    // ViewModel inject interface PlaybackController, còn Activity cần gán `service`
+    // (chỉ có ở class cụ thể) → cast an toàn về MusicPlaybackController khi cần.
+    private val playbackImpl: MusicPlaybackController
+        get() = playbackController as MusicPlaybackController
 
     // Hàng đợi đang CHỜ phát khi Service chưa bind xong (musicService = null).
     // TẠI SAO cần? → User có thể bấm bài NGAY trước khi Service connected.
@@ -55,6 +69,9 @@ abstract class BasePlayerActivity : AppCompatActivity() {
             val binder = service as MusicService.MusicBinder
             musicService = binder.getService()
             isBound = true
+
+            // Gán service vào PlaybackController → ViewModel gọi next()/prev() được (PHẦN 1)
+            playbackImpl.service = musicService
 
             // Lắng nghe trạng thái phát → cập nhật icon play/pause trên mini player
             musicService?.onPlaybackStateChanged = { isPlaying ->
@@ -81,6 +98,8 @@ abstract class BasePlayerActivity : AppCompatActivity() {
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
+            // Xóa reference → controller no-op thay vì gọi service đã mất
+            playbackImpl.service = null
             musicService = null
             isBound = false
         }
@@ -103,12 +122,34 @@ abstract class BasePlayerActivity : AppCompatActivity() {
     /** Hook cho Activity con: làm gì đó sau khi service sẵn sàng (mặc định không làm gì) */
     protected open fun onServiceReady() {}
 
-    /** Gắn sự kiện bấm nút play/pause trên mini player */
+    /**
+     * Gắn sự kiện bấm nút trên mini player (PHẦN 1):
+     * - Play/Pause → đi qua PlaybackController (đã gán service)
+     * - Next/Prev → gọi hook onNext()/onPrevious() để Activity con quyết định
+     *   (thường là ủy quyền xuống ViewModel.next()/previous())
+     */
     protected fun setupMiniPlayer() {
         findViewById<ImageButton>(R.id.btnMiniPlayPause)?.setOnClickListener {
-            musicService?.togglePlayPause()
+            playbackController.togglePlayPause()
+        }
+        findViewById<ImageButton>(R.id.btnMiniNext)?.setOnClickListener {
+            onNext()
+        }
+        findViewById<ImageButton>(R.id.btnMiniPrev)?.setOnClickListener {
+            onPrevious()
         }
     }
+
+    /**
+     * Hook bấm nút Next — Activity con override để gọi ViewModel.next()
+     * (VD: HomeActivity → homeViewModel.next() → PlaybackController → MusicService.next()).
+     */
+    protected open fun onNext() {}
+
+    /**
+     * Hook bấm nút Prev — Activity con override để gọi ViewModel.previous().
+     */
+    protected open fun onPrevious() {}
 
     /** Hiện mini player + cập nhật thông tin bài đang phát */
     protected fun showMiniPlayer(song: SongItem) {
@@ -150,8 +191,10 @@ abstract class BasePlayerActivity : AppCompatActivity() {
 
         // Hiện mini player ngay (feedback tức thì)
         showMiniPlayer(song)
-        // Lưu vào lịch sử nghe gần đây
-        recentStore.add(song)
+        // Lưu vào lịch sử nghe gần đây (Room — ghi bất đồng bộ, không block UI)
+        lifecycleScope.launch {
+            recentStore.add(song)
+        }
 
         // Service chưa bind xong → lưu lại, phát khi connected
         if (musicService == null) {

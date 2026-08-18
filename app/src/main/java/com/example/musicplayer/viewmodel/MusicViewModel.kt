@@ -4,11 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.musicplayer.model.SongItem
 import com.example.musicplayer.repository.MusicRepository
+import com.example.musicplayer.service.PlaybackController
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -24,10 +28,16 @@ import kotlinx.coroutines.launch
  * → Luôn có giá trị khởi tạo (không null) → an toàn hơn LiveData
  * → Có thể dùng combine, map, filter... như Flow operator
  * → LiveData vẫn dùng được, nhưng StateFlow phổ biến hơn trong project Kotlin mới
+ *
+ * ⚠️ THAY ĐỔI (PHẦN 1 + 2):
+ * → Trước: `MusicViewModel()` tự new `MusicRepository()` (DI thủ công).
+ * → Sau : Constructor nhận dependency từ Koin — giống HomeViewModel/PlaylistViewModel.
+ *   `MusicRepository` (network + Room favorites) + `PlaybackController` (điều khiển Service).
  */
-class MusicViewModel : ViewModel() {
-
-    private val repository = MusicRepository()
+class MusicViewModel(
+    private val repository: MusicRepository,
+    private val playbackController: PlaybackController
+) : ViewModel() {
 
     // ---- State: Danh sách bài hát ----
     private val _songs = MutableStateFlow<List<SongItem>>(emptyList())
@@ -48,6 +58,34 @@ class MusicViewModel : ViewModel() {
     // ---- State: URL stream đang phát (gửi cho MusicService) ----
     private val _streamUrl = MutableStateFlow<String?>(null)
     val streamUrl: StateFlow<String?> = _streamUrl.asStateFlow()
+
+    // ---- State: Yêu thích (PHẦN 2: từ ROOM) ----
+    private val _favorites = MutableStateFlow<List<SongItem>>(emptyList())
+    val favoriteIds: StateFlow<Set<String>> = _favorites
+        .map { list -> list.map { it.encodeId }.toSet() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    init {
+        // Quan sát danh sách yêu thích từ Room → cập nhật icon trái tim trên từng dòng
+        observeFavorites()
+    }
+
+    private fun observeFavorites() {
+        viewModelScope.launch {
+            repository.observeFavorites().collect { list ->
+                _favorites.value = list
+            }
+        }
+    }
+
+    /**
+     * Bật/tắt yêu thích 1 bài (ghi vào Room qua repository).
+     */
+    fun toggleFavorite(song: SongItem) {
+        viewModelScope.launch {
+            repository.toggleFavorite(song)
+        }
+    }
 
     // Job debounce search — cancel request cũ khi user gõ nhanh
     private var searchJob: Job? = null
@@ -141,4 +179,17 @@ class MusicViewModel : ViewModel() {
     fun clearError() {
         _errorMessage.value = null
     }
+
+    // ---- Điều khiển phát nhạc (PHẦN 1: qua PlaybackController → MusicService) ----
+    // UI nút bấm mini player → viewModel.next()/previous()/togglePlayPause()
+    // → PlaybackController → MusicService.next()/previous() → MediaPlayer
+
+    /** Chuyển bài kế tiếp trong queue */
+    fun next() = playbackController.next()
+
+    /** Chuyển về bài trước đó trong queue */
+    fun previous() = playbackController.previous()
+
+    /** Bật/tắt phát tạm dừng */
+    fun togglePlayPause() = playbackController.togglePlayPause()
 }

@@ -62,6 +62,16 @@
 
         </LinearLayout>
 
+        <!-- Nút Prev — chuyển về bài trước đó (PHẦN 1) -->
+        <ImageButton
+            android:id="@+id/btnMiniPrev"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Bài trước đó"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_prev" />
+
         <!-- Nút Play/Pause -->
         <ImageButton
             android:id="@+id/btnMiniPlayPause"
@@ -71,6 +81,16 @@
             android:contentDescription="Phát / Tạm dừng"
             android:scaleType="centerInside"
             android:src="@drawable/ic_play" />
+
+        <!-- Nút Next — chuyển bài kế tiếp (PHẦN 1) -->
+        <ImageButton
+            android:id="@+id/btnMiniNext"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Bài tiếp theo"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_next" />
 
     </LinearLayout>
 

@@ -20,7 +20,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.bumptech.glide.Glide
@@ -32,6 +31,7 @@ import com.example.musicplayer.model.SongItem
 import com.example.musicplayer.service.MusicService
 import com.example.musicplayer.viewmodel.MusicViewModel
 import kotlinx.coroutines.launch
+import org.koin.androidx.viewmodel.ext.android.viewModel
 
 /**
  * Màn hình chính — Tìm kiếm + phát nhạc.
@@ -52,7 +52,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
 
     // ViewModel — survive configuration change (xoay màn hình)
-    private lateinit var viewModel: MusicViewModel
+    // ⚠️ KHỞI TẠO QUA KOIN: MusicViewModel giờ cần dependency (MusicRepository + PlaybackController)
+    // → `by viewModel()` để Koin tự bơm, không dùng ViewModelProvider() thủ công nữa.
+    private val viewModel: MusicViewModel by viewModel()
 
     // Adapter cho RecyclerView
     private lateinit var songAdapter: SongAdapter
@@ -135,9 +137,6 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        // Khởi tạo ViewModel
-        viewModel = ViewModelProvider(this)[MusicViewModel::class.java]
-
         // Xin permission notification (Android 13+)
         requestNotificationPermission()
 
@@ -160,9 +159,15 @@ class MainActivity : AppCompatActivity() {
     private fun setupRecyclerView() {
         // Callback giờ có cả vị trí (position) — ViewModel nhớ danh sách đang hiển thị
         // để Service tự phát bài kế tiếp khi bài hiện tại hết (auto-advance)
-        songAdapter = SongAdapter { song, _ ->
-            viewModel.playSong(song)
-        }
+        // ⚠️ SongAdapter (PHẦN 2) cần 2 callback: bấm bài để phát + bấm tim để yêu thích
+        songAdapter = SongAdapter(
+            onItemClick = { song, _ ->
+                viewModel.playSong(song)
+            },
+            onFavoriteClick = { song, _ ->
+                viewModel.toggleFavorite(song)   // ghi Room qua Repository
+            }
+        )
         binding.rvSongs.adapter = songAdapter
         // LayoutManager đã set trong XML (app:layoutManager)
     }
@@ -220,6 +225,13 @@ class MainActivity : AppCompatActivity() {
                         songAdapter.submitList(songs)
                         // Hiện RecyclerView nếu có data, ẩn message
                         binding.rvSongs.visibility = if (songs.isNotEmpty()) View.VISIBLE else View.GONE
+                    }
+                }
+
+                // Observe danh sách id yêu thích (PHẦN 2 - Room) → cập nhật icon trái tim
+                launch {
+                    viewModel.favoriteIds.collect { ids ->
+                        songAdapter.updateFavorites(ids)
                     }
                 }
 

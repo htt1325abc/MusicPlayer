@@ -3,6 +3,7 @@ package com.example.musicplayer
 import android.app.Application
 import com.example.musicplayer.di.networkModule
 import com.example.musicplayer.di.repositoryModule
+import com.example.musicplayer.di.serviceModule
 import com.example.musicplayer.di.viewModelModule
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
@@ -31,10 +32,12 @@ class App : Application() {
             androidLogger(Level.INFO)
             // Cung cấp Application context cho các dependency cần context
             androidContext(this@App)
-            // Đăng ký các module: Network → Repository → ViewModel
+            // Đăng ký các module: Network → Repository → Service/Playback → ViewModel
+            // ⚠️ serviceModule chứa PlaybackController — MusicViewModel cần inject nó.
             modules(
                 networkModule,
                 repositoryModule,
+                serviceModule,
                 viewModelModule
             )
         }

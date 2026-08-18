@@ -1,11 +1,15 @@
 package com.example.musicplayer.repository
 
+import com.example.musicplayer.data.local.dao.FavoriteSongDao
+import com.example.musicplayer.data.local.entity.toFavoriteSongEntity
+import com.example.musicplayer.data.local.entity.toSongItem
 import com.example.musicplayer.model.ChartData
 import com.example.musicplayer.model.PlaylistData
 import com.example.musicplayer.model.PlaylistItem
 import com.example.musicplayer.model.SongItem
 import com.example.musicplayer.network.MusicApiService
-import com.example.musicplayer.network.RetrofitClient
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
 /**
  * Repository Pattern — lớp trung gian giữa ViewModel và Network.
@@ -23,14 +27,17 @@ import com.example.musicplayer.network.RetrofitClient
  *
  * ⚠️ THAY ĐỔI KHI ÁP DỤNG KOIN (PHẦN B):
  * → Trước: `private val apiService = RetrofitClient.apiService` (tự lấy singleton cũ)
- * → Sau : Constructor nhận `apiService` từ bên ngoài (Koin truyền vào qua `get()`).
- *   Repository KHÔNG CÒN tự quyết định lấy ApiService ở đâu — bên gọi quyết định.
+ * → Sau : Constructor nhận dependency từ bên ngoài (Koin truyền vào qua `get()`).
+ *   Repository KHÔNG CÒN tự quyết định lấy dependency ở đâu — bên gọi quyết định.
  *   Đây chính là "Inversion of Control" (Đảo ngược điều khiển) của DI.
- * → Giữ default `= RetrofitClient.apiService` để MainActivity (bản cũ) vẫn chạy
- *   không cần sửa → tiện so sánh trước/sau khi có Koin.
+ *
+ * ⚠️ PHẦN 2 (Room):
+ * → Thêm `favoriteSongDao` → Repository vừa gọi API (network) vừa đọc/ghi Room (local).
+ * → Yêu thích là dữ liệu local → lưu thẳng vào Room, không cần mạng.
  */
 class MusicRepository(
-    private val apiService: MusicApiService = RetrofitClient.apiService
+    private val apiService: MusicApiService,
+    private val favoriteSongDao: FavoriteSongDao
 ) {
 
     /**
@@ -119,6 +126,37 @@ class MusicRepository(
             }
         } catch (e: Exception) {
             Result.failure(Exception("Lỗi mạng: ${e.localizedMessage}"))
+        }
+    }
+
+    // ============================================================
+    // PHẦN 2 — ĐỌC/GHI ROOM: DANH SÁCH YÊU THÍCH
+    // ============================================================
+
+    /**
+     * Quan sát danh sách bài yêu thích (mới thêm trước).
+     * Room trả [Flow] → ViewModel collect 1 lần, UI tự cập nhật khi bảng đổi.
+     */
+    fun observeFavorites(): Flow<List<SongItem>> =
+        favoriteSongDao.observeAll()
+            .map { entities -> entities.map { it.toSongItem() } }
+
+    /**
+     * Kiểm tra 1 bài đã yêu thích chưa (để hiển thị icon trái tim đúng trạng thái).
+     */
+    suspend fun isFavorite(songId: String): Boolean =
+        favoriteSongDao.getById(songId) != null
+
+    /**
+     * Bật/tắt yêu thích 1 bài:
+     * - Chưa thích → thêm vào bảng favorite_songs.
+     * - Đã thích → xóa khỏi bảng.
+     */
+    suspend fun toggleFavorite(song: SongItem) {
+        if (favoriteSongDao.getById(song.encodeId) != null) {
+            favoriteSongDao.deleteById(song.encodeId)
+        } else {
+            favoriteSongDao.insert(song.toFavoriteSongEntity(addedAt = System.currentTimeMillis()))
         }
     }
 }

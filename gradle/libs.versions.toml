@@ -18,6 +18,12 @@ coroutines = "1.10.2"
 recyclerview = "1.4.0"
 # Koin — Dependency Injection (thêm 2026-08-18)
 koin = "3.5.6"
+# Room — local database (thêm 2026-08-18)
+room = "2.7.1"
+# KSP — Kotlin Symbol Processing, dùng để chạy Room compiler (thêm 2026-08-18)
+ksp = "2.3.9"
+# androidx.media — NotificationCompat.MediaStyle cho media control (thêm 2026-08-18)
+media = "1.7.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -49,6 +55,15 @@ recyclerview = { group = "androidx.recyclerview", name = "recyclerview", version
 # LƯU Ý: từ Koin 3.2+, module koin-androidx-viewmodel ĐÃ ĐƯỢC GỘP vào koin-android.
 # → chỉ cần koin-android là có sẵn `viewModel { }` DSL + `by viewModel()`.
 koin-android = { group = "io.insert-koin", name = "koin-android", version.ref = "koin" }
+# Room — local database (Entity/DAO/Database)
+room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+# Room compiler — sinh code impl cho DAO/Database, chạy qua KSP
+room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+# androidx.media — chứa NotificationCompat.MediaStyle (media control buttons)
+androidx-media = { group = "androidx.media", name = "media", version.ref = "media" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+# KSP — chạy Room annotation processor (thay KAPT, tương thích AGP 9 built-in Kotlin)
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

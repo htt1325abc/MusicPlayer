@@ -113,7 +113,7 @@
 
             </LinearLayout>
 
-            <!-- ===== Section 3: Nghe gần đây ===== -->
+            <!-- ===== Section 3: Playlist nổi bật ===== -->
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/rvPlaylists"
                 android:layout_width="match_parent"
@@ -126,6 +126,48 @@
                 app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
                 tools:listitem="@layout/item_playlist" />
 
+            <!-- ===== Section 4: Yêu thích (PHẦN 2 - Room) ===== -->
+            <LinearLayout
+                android:id="@+id/tvFavoritesHeader"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_marginTop="20dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_favorite" />
+
+                <TextView
+                    style="@style/TextAppearance.Material3.TitleMedium"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="Yêu thích"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <!-- Danh sách bài yêu thích (dọc) — hiện/ẩn theo danh sách từ Room -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvFavorites"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:nestedScrollingEnabled="false"
+                android:overScrollMode="never"
+                android:visibility="gone"
+                app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+                tools:listitem="@layout/item_recent_song"
+                tools:visibility="visible" />
+
+            <!-- ===== Section 5: Nghe gần đây ===== -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"

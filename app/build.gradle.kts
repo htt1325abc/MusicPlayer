@@ -1,5 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
+    // KSP — chạy Room compiler (sinh code impl cho @Dao/@Database)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -76,6 +78,17 @@ dependencies {
     //   Từ Koin 3.2+, koin-android đã gộp sẵn ViewModel DSL (`viewModel { }`, `by viewModel()`)
     //   → chỉ cần 1 dependency này (koin-androidx-viewmodel tách riêng đã không còn tồn tại).
     implementation(libs.koin.android)
+
+    // androidx.media — NotificationCompat.MediaStyle cho nút next/prev trên notification
+    implementation(libs.androidx.media)
+
+    // Room — local database (PHẦN 2)
+    // TẠI SAO dùng Room? → Lưu "Nghe gần đây" + "Yêu thích" bền vững, query theo SQL,
+    //   trả Flow<> để UI tự cập nhật (single source of truth).
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    // Room compiler chạy qua KSP — sinh code cho @Dao/@Database lúc build
+    ksp(libs.room.compiler)
 
     // Test
     testImplementation(libs.junit)

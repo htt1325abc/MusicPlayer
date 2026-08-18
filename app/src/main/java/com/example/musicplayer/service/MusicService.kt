@@ -303,6 +303,59 @@ class MusicService : Service(), KoinComponent {
     }
 
     /**
+     * Phát (nếu đang pause).
+     * PlaybackController.play() → ủy quyền vào đây.
+     */
+    fun play() {
+        mediaPlayer?.let { player ->
+            // Chưa prepare xong → bỏ qua (tránh error -38)
+            if (!isPrepared) return
+            if (!player.isPlaying) {
+                player.start()
+                onPlaybackStateChanged?.invoke(true)
+                updateNotification(true)
+            }
+        }
+    }
+
+    /**
+     * Tạm dừng (nếu đang phát).
+     * PlaybackController.pause() → ủy quyền vào đây.
+     */
+    fun pause() {
+        mediaPlayer?.let { player ->
+            if (!isPrepared) return
+            if (player.isPlaying) {
+                player.pause()
+                onPlaybackStateChanged?.invoke(false)
+                updateNotification(false)
+            }
+        }
+    }
+
+    /**
+     * Chuyển sang bài kế tiếp trong queue (auto-advance thủ công).
+     * PlaybackController.next() → ủy quyền vào đây.
+     */
+    fun next() {
+        if (currentIndex + 1 < queue.size) {
+            currentIndex++
+            playCurrent()
+        }
+    }
+
+    /**
+     * Chuyển về bài trước đó trong queue.
+     * PlaybackController.previous() → ủy quyền vào đây.
+     */
+    fun previous() {
+        if (currentIndex - 1 >= 0) {
+            currentIndex--
+            playCurrent()
+        }
+    }
+
+    /**
      * Kiểm tra đang phát hay không
      */
     fun isPlaying(): Boolean = mediaPlayer?.isPlaying == true
