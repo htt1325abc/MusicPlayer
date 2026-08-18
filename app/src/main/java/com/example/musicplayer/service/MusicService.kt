@@ -51,6 +51,16 @@ class MusicService : Service() {
     private var currentTitle: String = ""
     private var currentArtist: String = ""
 
+    // Cờ đánh dấu MediaPlayer hiện tại đã prepare xong (sẵn sàng start)
+    // TẠI SAO cần? → tránh gọi start() khi player còn đang buffer (state PREPARING)
+    //   → nếu gọi start() lúc đó, MediaPlayer báo lỗi -38 (INVALID_OPERATION) và hỏng
+    private var isPrepared = false
+
+    // Số thứ tự "phiên phát" — dùng để bỏ qua callback từ player CŨ (đã bị release)
+    // TẠI SAO cần? → user bấm liên tục 2 bài, player cũ có thể gửi callback muộn
+    //   → nếu không lọc, player cũ gọi start() trên instance đã release → crash
+    private var playbackGeneration = 0
+
     // Callback để thông báo Activity khi trạng thái thay đổi
     var onPlaybackStateChanged: ((Boolean) -> Unit)? = null
     var onError: ((String) -> Unit)? = null
@@ -95,9 +105,16 @@ class MusicService : Service() {
         currentTitle = title
         currentArtist = artist
 
+        // Tăng số phiên phát → mọi callback của player cũ sẽ bị bỏ qua
+        playbackGeneration++
+        val generation = playbackGeneration
+
         // Release player cũ nếu đang phát bài khác
         mediaPlayer?.release()
         mediaPlayer = null
+
+        // Player mới CHƯA prepare xong → chưa cho phép start()
+        isPrepared = false
 
         try {
             mediaPlayer = MediaPlayer().apply {
@@ -105,6 +122,12 @@ class MusicService : Service() {
 
                 // Callback khi đã buffer xong → bắt đầu phát
                 setOnPreparedListener {
+                    // Bỏ qua callback từ player cũ (đã bị thay thế bằng bài mới)
+                    if (generation != playbackGeneration) {
+                        release()
+                        return@setOnPreparedListener
+                    }
+                    isPrepared = true
                     start()
                     onPlaybackStateChanged?.invoke(true)
                     // Bắt đầu foreground service với notification
@@ -113,12 +136,15 @@ class MusicService : Service() {
 
                 // Callback khi phát xong bài → cập nhật UI
                 setOnCompletionListener {
+                    if (generation != playbackGeneration) return@setOnCompletionListener
                     onPlaybackStateChanged?.invoke(false)
                     updateNotification(false)
                 }
 
                 // Callback khi có lỗi (URL hết hạn, network...)
                 setOnErrorListener { _, what, extra ->
+                    if (generation != playbackGeneration) return@setOnErrorListener true
+                    isPrepared = false
                     onError?.invoke("Lỗi phát nhạc (code: $what/$extra)")
                     onPlaybackStateChanged?.invoke(false)
                     true // true = đã xử lý lỗi, không throw exception
@@ -140,9 +166,19 @@ class MusicService : Service() {
 
     /**
      * Toggle play/pause
+     *
+     * TẠI SAO cần kiểm tra isPrepared trước khi start()?
+     * → Nếu bấm play/pause NGAY trong lúc bài đang buffer (chưa prepare xong),
+     *   gọi player.start() sẽ báo lỗi "start called in state 4" (error -38)
+     *   → MediaPlayer hỏng, không phát được tiếng (đã từng gặp)
+     * → Nếu chưa sẵn sàng thì BỎ QUA lượt bấm — bài sẽ TỰ ĐỘNG phát
+     *   khi prepare xong nhờ onPreparedListener
      */
     fun togglePlayPause() {
         mediaPlayer?.let { player ->
+            // Player chưa prepare xong → bỏ qua (tránh error -38)
+            if (!isPrepared) return
+
             if (player.isPlaying) {
                 player.pause()
                 onPlaybackStateChanged?.invoke(false)
@@ -169,6 +205,7 @@ class MusicService : Service() {
             release()
         }
         mediaPlayer = null
+        isPrepared = false
         onPlaybackStateChanged?.invoke(false)
     }
 
