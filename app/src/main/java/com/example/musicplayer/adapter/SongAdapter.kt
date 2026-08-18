@@ -21,9 +21,10 @@ import com.example.musicplayer.model.SongItem
  * → Animation mượt hơn, hiệu suất tốt hơn (quan trọng khi search realtime)
  *
  * @param onItemClick callback khi user bấm vào 1 bài hát
+ *        (trả cả vị trí trong danh sách để phát theo queue auto-advance)
  */
 class SongAdapter(
-    private val onItemClick: (SongItem) -> Unit
+    private val onItemClick: (SongItem, Int) -> Unit
 ) : ListAdapter<SongItem, SongAdapter.SongViewHolder>(SongDiffCallback()) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): SongViewHolder {
@@ -51,7 +52,7 @@ class SongAdapter(
             binding.root.setOnClickListener {
                 val position = bindingAdapterPosition
                 if (position != RecyclerView.NO_POSITION) {
-                    onItemClick(getItem(position))
+                    onItemClick(getItem(position), position)
                 }
             }
         }

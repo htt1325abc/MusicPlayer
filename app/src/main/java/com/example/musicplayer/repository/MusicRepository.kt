@@ -2,7 +2,9 @@ package com.example.musicplayer.repository
 
 import com.example.musicplayer.model.ChartData
 import com.example.musicplayer.model.PlaylistData
+import com.example.musicplayer.model.PlaylistItem
 import com.example.musicplayer.model.SongItem
+import com.example.musicplayer.network.MusicApiService
 import com.example.musicplayer.network.RetrofitClient
 
 /**
@@ -18,10 +20,18 @@ import com.example.musicplayer.network.RetrofitClient
  * → Kotlin built-in, bọc success value HOẶC exception
  * → Thay vì try-catch rải khắp ViewModel, tập trung xử lý lỗi tại đây
  * → ViewModel chỉ cần: result.getOrNull() hoặc result.exceptionOrNull()
+ *
+ * ⚠️ THAY ĐỔI KHI ÁP DỤNG KOIN (PHẦN B):
+ * → Trước: `private val apiService = RetrofitClient.apiService` (tự lấy singleton cũ)
+ * → Sau : Constructor nhận `apiService` từ bên ngoài (Koin truyền vào qua `get()`).
+ *   Repository KHÔNG CÒN tự quyết định lấy ApiService ở đâu — bên gọi quyết định.
+ *   Đây chính là "Inversion of Control" (Đảo ngược điều khiển) của DI.
+ * → Giữ default `= RetrofitClient.apiService` để MainActivity (bản cũ) vẫn chạy
+ *   không cần sửa → tiện so sánh trước/sau khi có Koin.
  */
-class MusicRepository {
-
-    private val apiService = RetrofitClient.apiService
+class MusicRepository(
+    private val apiService: MusicApiService = RetrofitClient.apiService
+) {
 
     /**
      * Tìm kiếm bài hát theo keyword.
@@ -90,6 +100,22 @@ class MusicRepository {
                 Result.success(response.data)
             } else {
                 Result.failure(Exception(response.error ?: "Không tìm thấy playlist"))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception("Lỗi mạng: ${e.localizedMessage}"))
+        }
+    }
+
+    /**
+     * Lấy danh sách playlist nổi bật cho màn hình Home (mới - PHẦN A).
+     */
+    suspend fun getFeaturedPlaylists(): Result<List<PlaylistItem>> {
+        return try {
+            val response = apiService.getFeaturedPlaylists()
+            if (response.success && response.data != null) {
+                Result.success(response.data)
+            } else {
+                Result.failure(Exception(response.error ?: "Không tải được playlist"))
             }
         } catch (e: Exception) {
             Result.failure(Exception("Lỗi mạng: ${e.localizedMessage}"))

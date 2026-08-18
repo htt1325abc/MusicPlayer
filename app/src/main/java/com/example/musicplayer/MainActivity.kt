@@ -92,8 +92,13 @@ class MainActivity : AppCompatActivity() {
             }
 
             // Service đã sẵn sàng → phát bài đang chờ (nếu có)
+            // Đưa cả queue để Service phát tiếp bài sau khi hết bài này
             pendingUrl?.let { url ->
-                playOnService(url, pendingSong)
+                val queue = viewModel.getCurrentQueue()
+                val song = pendingSong
+                val startIndex = queue.indexOfFirst { it.encodeId == song?.encodeId }
+                    .coerceAtLeast(0)
+                musicService?.playQueue(queue, startIndex, preFetchedUrl = url)
                 pendingUrl = null
                 pendingSong = null
             }
@@ -153,7 +158,9 @@ class MainActivity : AppCompatActivity() {
      * Khi user bấm vào bài hát → gọi ViewModel.playSong()
      */
     private fun setupRecyclerView() {
-        songAdapter = SongAdapter { song ->
+        // Callback giờ có cả vị trí (position) — ViewModel nhớ danh sách đang hiển thị
+        // để Service tự phát bài kế tiếp khi bài hiện tại hết (auto-advance)
+        songAdapter = SongAdapter { song, _ ->
             viewModel.playSong(song)
         }
         binding.rvSongs.adapter = songAdapter
@@ -249,9 +256,15 @@ class MainActivity : AppCompatActivity() {
                     viewModel.streamUrl.collect { url ->
                         if (url != null) {
                             val song = viewModel.currentSong.value
+                            // Đưa CẢ danh sách đang hiển thị cho Service → khi hết bài
+                            // này Service tự phát bài kế tiếp (auto-advance).
+                            // URL bài đầu đã có sẵn → truyền luôn để không fetch lại.
+                            val queue = viewModel.getCurrentQueue()
+                            val startIndex = queue.indexOfFirst { it.encodeId == song?.encodeId }
+                                .coerceAtLeast(0)
                             if (musicService != null) {
                                 // Service đã sẵn sàng → phát luôn
-                                playOnService(url, song)
+                                musicService?.playQueue(queue, startIndex, preFetchedUrl = url)
                             } else {
                                 // Service chưa bind xong → lưu lại, phát khi connected
                                 pendingUrl = url
@@ -264,18 +277,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-    }
-
-    /**
-     * Gửi URL + thông tin bài hát cho MusicService để phát nhạc.
-     * Tách riêng hàm để dùng lại khi phát ngay hoặc phát pending.
-     */
-    private fun playOnService(url: String, song: SongItem?) {
-        musicService?.playFromUrl(
-            url = url,
-            title = song?.title ?: "Đang phát",
-            artist = song?.artistsNames ?: ""
-        )
     }
 
     /**

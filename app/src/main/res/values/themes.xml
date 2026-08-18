@@ -1,8 +1,20 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
-    <style name="Base.Theme.MusicPlayer" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your light theme here. -->
-        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+    <!-- Base application theme.
+         TẠI SAO chuyển sang Theme.Material3.Dark (không phải DayNight)?
+         → Đây là app nhạc → LUÔN dùng dark theme cho đúng chất & dễ nhìn.
+         → Theme.Material3.Dark.NoActionBar ép app luôn tối kể cả khi máy ở light mode.
+         → Nếu sau này muốn theo hệ thống, đổi parent thành Theme.Material3.DayNight.NoActionBar. -->
+    <style name="Base.Theme.MusicPlayer" parent="Theme.Material3.Dark.NoActionBar">
+        <!-- Màu chủ đạo + bề mặt theo palette trong colors.xml -->
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorOnPrimary">@color/on_primary</item>
+        <item name="colorSecondary">@color/secondary</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorOnSurface">@color/on_surface</item>
+        <item name="colorSurfaceVariant">@color/surface_variant</item>
+        <item name="colorOnSurfaceVariant">@color/on_surface_variant</item>
+        <item name="colorError">@color/error</item>
+        <item name="android:colorBackground">@color/background</item>
     </style>
 
     <style name="Theme.MusicPlayer" parent="Base.Theme.MusicPlayer" />

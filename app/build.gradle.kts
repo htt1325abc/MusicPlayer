@@ -67,6 +67,16 @@ dependencies {
     implementation(libs.coroutines.core)
     implementation(libs.coroutines.android)
 
+    // RecyclerView — khai báo tường minh (trước đây dựa transitive từ Material)
+    implementation(libs.recyclerview)
+
+    // Koin — Dependency Injection (PHẦN B)
+    // TẠI SAO thêm Koin? → Quản lý Retrofit/Repository/ViewModel tập trung 1 nơi,
+    //   ViewModel không phải tự new() dependency nữa → dễ test & thay thế.
+    //   Từ Koin 3.2+, koin-android đã gộp sẵn ViewModel DSL (`viewModel { }`, `by viewModel()`)
+    //   → chỉ cần 1 dependency này (koin-androidx-viewmodel tách riêng đã không còn tồn tại).
+    implementation(libs.koin.android)
+
     // Test
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.espresso.core)

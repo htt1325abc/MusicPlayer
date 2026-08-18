@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Icon playlist (Material "playlist_play") — dùng cho tiêu đề section -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="?attr/colorPrimary">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M3,10h11v2H3zM3,6h11v2H3zM3,14h7v2H3zM20.59,11.93l-4.25,4.24 -2.12,-2.12 -1.41,1.41L16.34,19 22,13.34z" />
+</vector>

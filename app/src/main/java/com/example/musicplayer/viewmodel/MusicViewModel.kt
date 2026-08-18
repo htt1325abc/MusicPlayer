@@ -52,6 +52,13 @@ class MusicViewModel : ViewModel() {
     // Job debounce search — cancel request cũ khi user gõ nhanh
     private var searchJob: Job? = null
 
+    // Danh sách bài đang hiển thị khi user bấm phát — dùng cho auto-advance
+    // (Service cần cả danh sách để phát bài kế tiếp khi bài hiện tại hết)
+    private var currentQueue: List<SongItem> = emptyList()
+
+    /** Lấy danh sách bài đang hiển thị lúc user bấm phát (để Service phát tiếp theo) */
+    fun getCurrentQueue(): List<SongItem> = currentQueue
+
     /**
      * Tìm kiếm bài hát với debounce 500ms.
      *
@@ -100,6 +107,8 @@ class MusicViewModel : ViewModel() {
      * streamUrl → gửi URL cho MusicService
      */
     fun playSong(song: SongItem) {
+        // Nhớ danh sách đang hiển thị → Service tự phát bài kế tiếp khi hết bài này
+        currentQueue = _songs.value
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null

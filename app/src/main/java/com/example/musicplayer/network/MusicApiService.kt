@@ -3,6 +3,7 @@ package com.example.musicplayer.network
 import com.example.musicplayer.model.ApiResponse
 import com.example.musicplayer.model.ChartData
 import com.example.musicplayer.model.PlaylistData
+import com.example.musicplayer.model.PlaylistItem
 import com.example.musicplayer.model.SongItem
 import com.example.musicplayer.model.StreamData
 import retrofit2.http.GET
@@ -51,4 +52,10 @@ interface MusicApiService {
      */
     @GET("api/playlist/{id}")
     suspend fun getPlaylistDetail(@Path("id") playlistId: String): ApiResponse<PlaylistData>
+
+    /**
+     * Lấy danh sách playlist nổi bật cho màn hình Home (PHẦN A)
+     */
+    @GET("api/playlists")
+    suspend fun getFeaturedPlaylists(): ApiResponse<List<PlaylistItem>>
 }

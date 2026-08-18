@@ -13,6 +13,15 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.musicplayer.MainActivity
 import com.example.musicplayer.R
+import com.example.musicplayer.model.SongItem
+import com.example.musicplayer.repository.MusicRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import org.koin.core.component.KoinComponent
+import org.koin.core.component.inject
 
 /**
  * MusicService — Foreground Service phát nhạc nền.
@@ -32,7 +41,7 @@ import com.example.musicplayer.R
  * → Đủ dùng cho đồ án học tập với streaming mp3 đơn giản
  * → ExoPlayer mạnh hơn nhưng phức tạp hơn (adaptive streaming, DRM...)
  */
-class MusicService : Service() {
+class MusicService : Service(), KoinComponent {
 
     companion object {
         const val CHANNEL_ID = "music_playback_channel"
@@ -43,6 +52,32 @@ class MusicService : Service() {
 
     // Binder instance để Activity kết nối
     private val binder = MusicBinder()
+
+    // Repository để service TỰ lấy URL bài hát khi auto-advance (chạy nền).
+    // TẠI SAO service cần repository?
+    // → Khi bài A phát xong, service phải tự lấy URL bài B rồi phát tiếp.
+    // → Nếu đợi Activity lấy URL thì khi app ở background/khóa màn hình
+    //   Activity có thể không còn sống → nhạc ngừng giữa chừng.
+    // → KoinComponent giúp service `by inject()` MusicRepository (Koin đã start ở App).
+    private val repository: MusicRepository by inject()
+
+    // CoroutineScope riêng cho service — dùng để lấy URL stream khi auto-advance
+    private val playbackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    // ---- Hàng đợi phát nhạc (queue) ----
+    // TẠI SAO cần queue?
+    // → Trước đây phát 1 bài xong là DỪNG (bài "Dấu Chân..." hết 5:35 là hết nhạc).
+    // → Giờ khi user bấm 1 bài trong playlist/list, service lưu cả danh sách + vị trí.
+    // → Bài nào phát xong → TỰ ĐỘNG phát bài kế tiếp trong danh sách (như app nhạc thật).
+    private var queue: List<SongItem> = emptyList()
+    private var currentIndex = -1
+
+    // Bài đang phát hiện tại (cho UI mini player cập nhật khi tự chuyển bài)
+    var currentSong: SongItem? = null
+        private set
+
+    // Callback khi TỰ ĐỘNG chuyển sang bài mới (auto-advance) → Activity cập nhật mini player
+    var onSongChanged: ((SongItem) -> Unit)? = null
 
     // MediaPlayer — engine phát nhạc
     private var mediaPlayer: MediaPlayer? = null
@@ -95,13 +130,82 @@ class MusicService : Service() {
     }
 
     /**
-     * Phát nhạc từ URL stream.
+     * Phát 1 danh sách bài hát (hàng đợi) bắt đầu từ vị trí startIndex.
+     * Khi 1 bài phát xong → TỰ ĐỘNG chuyển sang bài tiếp theo trong danh sách.
      *
-     * TẠI SAO dùng prepareAsync() thay vì prepare()?
-     * → prepare() block Main Thread → app đơ khi buffer nhạc từ internet
-     * → prepareAsync() chạy background, gọi callback khi sẵn sàng
+     * @param preFetchedUrl URL bài đầu tiên đã có sẵn (màn hình cũ MainActivity
+     *        fetch trước rồi truyền vào). Nếu null → service tự lấy qua repository.
+     */
+    fun playQueue(songs: List<SongItem>, startIndex: Int, preFetchedUrl: String? = null) {
+        if (songs.isEmpty()) return
+        queue = songs
+        currentIndex = startIndex.coerceIn(0, songs.size - 1)
+
+        val song = queue[currentIndex]
+        currentSong = song
+        onSongChanged?.invoke(song)
+
+        if (preFetchedUrl != null) {
+            // URL đã có sẵn → phát thẳng, không fetch lại
+            playInternal(preFetchedUrl, song.title, song.artistsNames)
+        } else {
+            // Tự lấy URL rồi phát
+            playCurrent()
+        }
+    }
+
+    /**
+     * Phát bài tại vị trí currentIndex trong queue.
+     * Lấy URL stream ở background → playInternal → thông báo bài mới cho UI.
+     */
+    private fun playCurrent() {
+        if (currentIndex !in queue.indices) {
+            stopPlayback()
+            return
+        }
+        val song = queue[currentIndex]
+        currentSong = song
+        onSongChanged?.invoke(song)
+
+        // Lấy URL ở background; có kết quả mới phát (tránh block main thread)
+        val generation = playbackGeneration
+        playbackScope.launch {
+            repository.getStreamUrl(song.encodeId)
+                .onSuccess { url ->
+                    // Bỏ qua nếu user đã chọn bài khác trong lúc buffer
+                    if (generation == playbackGeneration) {
+                        playInternal(url, song.title, song.artistsNames)
+                    }
+                }
+                .onFailure { error ->
+                    onError?.invoke(error.message ?: "Không lấy được link nhạc")
+                    // Tự bỏ qua bài lỗi (VIP/hết link) → phát bài tiếp theo
+                    if (currentIndex + 1 < queue.size) {
+                        currentIndex++
+                        playCurrent()
+                    } else {
+                        onPlaybackStateChanged?.invoke(false)
+                        updateNotification(false)
+                    }
+                }
+        }
+    }
+
+    /**
+     * Phát 1 bài đơn lẻ (KHÔNG auto-advance) — dùng cho màn hình cũ MainActivity.
+     * Xóa queue để bài phát xong KHÔNG tự chuyển sang bài khác bất ngờ.
      */
     fun playFromUrl(url: String, title: String, artist: String) {
+        queue = emptyList()
+        currentIndex = -1
+        playInternal(url, title, artist)
+    }
+
+    /**
+     * Phần lõi phát nhạc: tạo MediaPlayer mới, buffer rồi start.
+     * Tách riêng để cả playQueue lẫn playFromUrl dùng chung.
+     */
+    private fun playInternal(url: String, title: String, artist: String) {
         currentTitle = title
         currentArtist = artist
 
@@ -134,11 +238,18 @@ class MusicService : Service() {
                     startForeground(NOTIFICATION_ID, buildNotification(true))
                 }
 
-                // Callback khi phát xong bài → cập nhật UI
+                // Callback khi phát xong bài → TỰ ĐỘNG chuyển bài kế tiếp trong queue
                 setOnCompletionListener {
                     if (generation != playbackGeneration) return@setOnCompletionListener
                     onPlaybackStateChanged?.invoke(false)
-                    updateNotification(false)
+                    if (currentIndex + 1 < queue.size) {
+                        // Còn bài tiếp theo → phát luôn (auto-advance, chạy cả khi app ở background)
+                        currentIndex++
+                        playCurrent()
+                    } else {
+                        // Hết danh sách → dừng, cập nhật notification
+                        updateNotification(false)
+                    }
                 }
 
                 // Callback khi có lỗi (URL hết hạn, network...)
@@ -206,6 +317,9 @@ class MusicService : Service() {
         }
         mediaPlayer = null
         isPrepared = false
+        queue = emptyList()
+        currentIndex = -1
+        currentSong = null
         onPlaybackStateChanged?.invoke(false)
     }
 
@@ -288,6 +402,7 @@ class MusicService : Service() {
      * Cleanup khi Service bị destroy
      */
     override fun onDestroy() {
+        playbackScope.cancel()
         mediaPlayer?.release()
         mediaPlayer = null
         super.onDestroy()

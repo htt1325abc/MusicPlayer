@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Item thể loại nhạc (card cuộn ngang).
+     Gradient màu được set trong Adapter (mỗi thể loại 1 màu riêng) qua ImageView background. -->
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="140dp"
+    android:layout_height="88dp"
+    android:layout_marginEnd="12dp"
+    app:cardBackgroundColor="@color/surface"
+    app:cardCornerRadius="16dp"
+    app:cardElevation="2dp"
+    app:rippleColor="@color/white"
+    tools:ignore="RtlSymmetry">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <!-- Ảnh nền = gradient màu thể loại (set programmatically trong Adapter) -->
+        <ImageView
+            android:id="@+id/ivGenreBg"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="fitXY" />
+
+        <!-- Scrim tối ở đáy để chữ dễ đọc -->
+        <ImageView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="fitXY"
+            android:src="@drawable/bg_scrim" />
+
+        <!-- Tên thể loại -->
+        <TextView
+            android:id="@+id/tvGenreName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:padding="10dp"
+            android:textAppearance="?attr/textAppearanceTitleSmall"
+            android:textColor="@color/white"
+            android:textStyle="bold"
+            tools:text="Nhạc trẻ" />
+
+    </FrameLayout>
+
+</com.google.android.material.card.MaterialCardView>

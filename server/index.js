@@ -169,6 +169,56 @@ app.get("/api/playlist/:id", async (req, res, next) => {
 });
 
 // ============================================================
+// ENDPOINT 5: Danh sách playlist nổi bật (cho màn hình Home)
+// GET /api/playlists
+//
+// TẠI SAO dùng getTop100 thay vì getHome?
+// → getTop100 trả về các playlist/album được ZingMP3 biên tập sẵn
+//   (theo từng thể loại), gọn hơn getHome (trả rất nhiều section lộn xộn)
+// → Mỗi item đều có encodeId → app bấm vào là gọi /api/playlist/:id được ngay
+// ============================================================
+app.get("/api/playlists", async (req, res, next) => {
+  try {
+    const data = await ZingMp3.getTop100();
+
+    // getTop100 trả về dạng: { data: { sectionKey: { title, items: [...] }, ... } }
+    // Ta duyệt mọi section, gom tất cả item có encodeId thành 1 danh sách phẳng
+    const sections = data?.data || {};
+    const playlists = [];
+
+    for (const key of Object.keys(sections)) {
+      const section = sections[key];
+      if (section?.items && Array.isArray(section.items)) {
+        for (const item of section.items) {
+          if (item?.encodeId && item?.title) {
+            // Số bài hát: ưu tiên item.song.total (nếu có).
+            // Với các playlist "Top 100 X Hay Nhất", Zing không trả song.total
+            // trong getTop100 → suy ra từ tiêu đề "Top 100..." = 100 bài.
+            const match = item.title.match(/^Top\s*(\d+)/i);
+            const songCount =
+              item.song?.total || (match ? parseInt(match[1], 10) : 0);
+
+            playlists.push({
+              encodeId: item.encodeId,
+              title: item.title,
+              thumbnail: item.thumbnail || item.thumbnailM || null,
+              songCount: songCount,
+            });
+          }
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      data: playlists.slice(0, 20), // giới hạn 20 playlist cho gọn
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
 // Middleware xử lý lỗi chung
 // Mọi lỗi throw ra đều được bắt tại đây → trả JSON thay vì crash server
 // ============================================================
@@ -192,4 +242,5 @@ app.listen(PORT, () => {
   console.log(`   GET /api/song/:id/stream`);
   console.log(`   GET /api/chart`);
   console.log(`   GET /api/playlist/:id`);
+  console.log(`   GET /api/playlists`);
 });

@@ -15,6 +15,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
+        android:name=".App"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -31,16 +32,28 @@
              → Khi deploy lên Render (HTTPS) thì không ảnh hưởng, vẫn an toàn
              → LƯU Ý: với production nên dùng network_security_config.xml thay vì bật toàn bộ
         -->
+        <!-- HomeActivity — màn hình chính MỚI, là LAUNCHER -->
         <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:windowSoftInputMode="adjustResize">
+            android:name=".ui.HomeActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- MainActivity — màn hình TÌM KIẾM (bản cũ, DI thủ công để so sánh).
+             Không còn là launcher, được mở từ nút search trên Home. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- SongListActivity — danh sách bài hát (playlist / thể loại) -->
+        <activity
+            android:name=".ui.SongListActivity"
+            android:exported="false" />
 
         <!-- MusicService — phát nhạc nền với notification -->
         <service

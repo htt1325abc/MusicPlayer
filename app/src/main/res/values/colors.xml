@@ -2,4 +2,24 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+
+    <!-- ===== Dark theme palette (app nhạc → theme tối) ===== -->
+    <!-- Nền chính — rất tối, tạo cảm giác "tối như phòng nghe nhạc" -->
+    <color name="background">#0E0E12</color>
+    <!-- Bề mặt thẻ/card -->
+    <color name="surface">#1A1A21</color>
+    <!-- Bề mặt nhấn (chip, input) -->
+    <color name="surface_variant">#24242E</color>
+    <!-- Màu chủ đạo — tím neon (accent âm nhạc) -->
+    <color name="primary">#8B7CFF</color>
+    <!-- Chữ trên màu chủ đạo -->
+    <color name="on_primary">#14141A</color>
+    <!-- Màu phụ — xanh cyan -->
+    <color name="secondary">#3DD6C0</color>
+    <!-- Chữ chính -->
+    <color name="on_surface">#E8E8F0</color>
+    <!-- Chữ phụ (mờ hơn) -->
+    <color name="on_surface_variant">#9A9AA8</color>
+    <!-- Màu lỗi -->
+    <color name="error">#FF6B6B</color>
 </resources>

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mini Player Bar — dùng chung cho Home và màn hình danh sách bài hát.
+     TẠI SAO tách ra file riêng (include)?
+     → Cùng 1 mini player xuất hiện ở nhiều màn hình → tránh duplicate layout.
+     → Các ID bên trong là GLOBAL (id toàn app) → Activity nào cũng findViewById được. -->
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/miniPlayerBar"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:visibility="gone"
+    app:cardBackgroundColor="@color/surface_variant"
+    app:cardCornerRadius="0dp"
+    app:cardElevation="8dp"
+    tools:visibility="visible">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="12dp">
+
+        <!-- Thumbnail bài đang phát -->
+        <com.google.android.material.imageview.ShapeableImageView
+            android:id="@+id/ivMiniThumbnail"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="Ảnh bài hát"
+            android:scaleType="centerCrop"
+            android:src="@drawable/ic_music_note"
+            app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
+
+        <!-- Tên bài + ca sĩ -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvMiniTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textAppearance="?attr/textAppearanceTitleSmall"
+                android:textColor="?attr/colorOnSurface"
+                tools:text="Chạy Ngay Đi" />
+
+            <TextView
+                android:id="@+id/tvMiniArtist"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                tools:text="Sơn Tùng M-TP" />
+
+        </LinearLayout>
+
+        <!-- Nút Play/Pause -->
+        <ImageButton
+            android:id="@+id/btnMiniPlayPause"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Phát / Tạm dừng"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_play" />
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>
