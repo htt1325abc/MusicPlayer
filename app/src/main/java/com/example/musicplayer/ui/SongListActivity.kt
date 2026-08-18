@@ -46,9 +46,15 @@ class SongListActivity : BasePlayerActivity() {
         binding = ActivitySongListBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Toolbar có nút back
-        setSupportActionBar(binding.toolbar)
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+        // Toolbar có nút back.
+        // ⚠️ QUAN TRỌNG: KHÔNG dùng setSupportActionBar() cho toolbar này!
+        // → Khi dùng setSupportActionBar(), AppCompat chiếm quyền điều khiển nút back
+        //   của MaterialToolbar và "nuốt" click → nút back không hoạt động (đã test thực tế).
+        // → Giải pháp: dùng toolbar ĐỘC LẬP + tự gắn click bằng setNavigationOnClickListener()
+        //   (API gốc của Toolbar → chắc chắn được gọi khi bấm nút mũi tên).
+        binding.toolbar.setNavigationOnClickListener {
+            onBackPressedDispatcher.onBackPressed()   // tương đương nút Back hệ thống
+        }
 
         // DÙNG LẠI SongAdapter có sẵn — bấm bài → phát theo cả danh sách (queue)
         // → Service tự phát bài kế tiếp khi bài hiện tại hết (auto-advance)
@@ -133,11 +139,5 @@ class SongListActivity : BasePlayerActivity() {
      */
     override fun onPrevious() {
         playlistViewModel.previous()
-    }
-
-    /** Nút back trên toolbar → quay lại màn hình trước */
-    override fun onSupportNavigateUp(): Boolean {
-        onBackPressedDispatcher.onBackPressed()
-        return true
     }
 }
