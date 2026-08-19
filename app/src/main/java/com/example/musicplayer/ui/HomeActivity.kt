@@ -1,7 +1,11 @@
 package com.example.musicplayer.ui
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.result.contract.ActivityResultContracts
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -49,6 +53,14 @@ class HomeActivity : BasePlayerActivity() {
     private lateinit var recentAdapter: RecentSongAdapter
     private lateinit var favoriteAdapter: RecentSongAdapter
 
+    // Xin quyền POST_NOTIFICATIONS (Android 13+/API 33+).
+    // TẠI SAO cần? → Android 13+ CHẶN notification (kể cả media notification)
+    //   nếu app chưa được cấp quyền → người dùng không thấy nút điều khiển
+    //   trên lock screen / thanh trạng thái.
+    private val requestNotificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* Kết quả true/false — không bắt buộc xử lý thêm, chỉ cần xin khi chạy */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityHomeBinding.inflate(layoutInflater)
@@ -62,10 +74,26 @@ class HomeActivity : BasePlayerActivity() {
         setupMiniPlayer()
         observeViewModel()
 
+        // Xin quyền hiện notification (chỉ trên Android 13+)
+        requestNotificationPermissionIfNeeded()
+
         // Load playlist nổi bật từ server.
         // LƯU Ý (PHẦN 2): "Nghe gần đây" & "Yêu thích" giờ đến từ Room Flow → ViewModel
         // collect 1 lần trong init, Room TỰ emit lại khi data đổi → không cần load thủ công.
         homeViewModel.loadHome()
+    }
+
+    /**
+     * Xin quyền POST_NOTIFICATIONS trên Android 13+ (API 33) nếu chưa được cấp.
+     * Các bản cũ hơn (API < 33) không cần — permission cấp ngầm khi cài đặt.
+     */
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 
     private fun setupAdapters() {

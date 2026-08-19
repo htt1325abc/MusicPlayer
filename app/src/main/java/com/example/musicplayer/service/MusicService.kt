@@ -1,18 +1,14 @@
 package com.example.musicplayer.service
 
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.media.MediaPlayer
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
-import androidx.core.app.NotificationCompat
-import com.example.musicplayer.MainActivity
-import com.example.musicplayer.R
+import androidx.media.session.MediaButtonReceiver
 import com.example.musicplayer.model.SongItem
 import com.example.musicplayer.repository.MusicRepository
 import kotlinx.coroutines.CoroutineScope
@@ -41,12 +37,18 @@ import org.koin.core.component.inject
  * → Đủ dùng cho đồ án học tập với streaming mp3 đơn giản
  * → ExoPlayer mạnh hơn nhưng phức tạp hơn (adaptive streaming, DRM...)
  */
-class MusicService : Service(), KoinComponent {
+class MusicService : Service(), KoinComponent, MediaStateProvider {
 
     companion object {
         const val CHANNEL_ID = "music_playback_channel"
         const val NOTIFICATION_ID = 1
+
+        // Các action từ nút bấm trên notification / media button (tai nghe, Bluetooth)
+        const val ACTION_PLAY = "com.example.musicplayer.PLAY"
+        const val ACTION_PAUSE = "com.example.musicplayer.PAUSE"
         const val ACTION_PLAY_PAUSE = "com.example.musicplayer.PLAY_PAUSE"
+        const val ACTION_NEXT = "com.example.musicplayer.NEXT"
+        const val ACTION_PREVIOUS = "com.example.musicplayer.PREVIOUS"
         const val ACTION_STOP = "com.example.musicplayer.STOP"
     }
 
@@ -85,6 +87,11 @@ class MusicService : Service(), KoinComponent {
     // Thông tin bài đang phát (hiển thị trên notification)
     private var currentTitle: String = ""
     private var currentArtist: String = ""
+    private var currentArtUrl: String? = null
+
+    // MediaSessionManager — quản lý MediaSessionCompat + notification (MediaStyle).
+    // Tạo trong onCreate, giải phóng trong onDestroy.
+    private lateinit var mediaSessionManager: MediaSessionManager
 
     // Cờ đánh dấu MediaPlayer hiện tại đã prepare xong (sẵn sàng start)
     // TẠI SAO cần? → tránh gọi start() khi player còn đang buffer (state PREPARING)
@@ -112,6 +119,26 @@ class MusicService : Service(), KoinComponent {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+
+        // Khởi tạo MediaSession + bộ build notification (MediaStyle)
+        mediaSessionManager = MediaSessionManager(
+            context = this,
+            provider = this,
+            onMediaAction = { action ->
+                // Callback từ MediaSessionCompat (lock screen / tai nghe / Bluetooth)
+                when (action) {
+                    ACTION_PLAY -> play()
+                    ACTION_PAUSE -> pause()
+                    ACTION_NEXT -> next()
+                    ACTION_PREVIOUS -> previous()
+                    ACTION_STOP -> {
+                        stopPlayback()
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelf()
+                    }
+                }
+            }
+        )
     }
 
     /**
@@ -119,12 +146,21 @@ class MusicService : Service(), KoinComponent {
      */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            // Nút bấm từ notification: Play / Pause / Next / Previous
+            ACTION_PLAY -> play()
+            ACTION_PAUSE -> pause()
             ACTION_PLAY_PAUSE -> togglePlayPause()
+            ACTION_NEXT -> next()
+            ACTION_PREVIOUS -> previous()
             ACTION_STOP -> {
                 stopPlayback()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
+            // Media button từ tai nghe/Bluetooth (qua MediaButtonReceiver)
+            // → chuyển KeyEvent vào MediaSessionCompat để kích hoạt callback
+            Intent.ACTION_MEDIA_BUTTON ->
+                MediaButtonReceiver.handleIntent(mediaSessionManager.session, intent)
         }
         return START_NOT_STICKY // Không tự restart nếu bị system kill
     }
@@ -185,7 +221,8 @@ class MusicService : Service(), KoinComponent {
                         playCurrent()
                     } else {
                         onPlaybackStateChanged?.invoke(false)
-                        updateNotification(false)
+                        mediaSessionManager.updatePlaybackState()
+                        refreshNotification()
                     }
                 }
         }
@@ -208,6 +245,7 @@ class MusicService : Service(), KoinComponent {
     private fun playInternal(url: String, title: String, artist: String) {
         currentTitle = title
         currentArtist = artist
+        currentArtUrl = currentSong?.thumbnailM ?: currentSong?.thumbnail
 
         // Tăng số phiên phát → mọi callback của player cũ sẽ bị bỏ qua
         playbackGeneration++
@@ -234,21 +272,25 @@ class MusicService : Service(), KoinComponent {
                     isPrepared = true
                     start()
                     onPlaybackStateChanged?.invoke(true)
-                    // Bắt đầu foreground service với notification
-                    startForeground(NOTIFICATION_ID, buildNotification(true))
+                    // Cập nhật metadata (title/artist/album art) + trạng thái phát
+                    mediaSessionManager.updateMetadata()
+                    mediaSessionManager.updatePlaybackState()
+                    // Bắt đầu foreground service với notification MediaStyle (3 nút)
+                    startForeground(NOTIFICATION_ID, mediaSessionManager.buildNotification())
                 }
 
                 // Callback khi phát xong bài → TỰ ĐỘNG chuyển bài kế tiếp trong queue
                 setOnCompletionListener {
                     if (generation != playbackGeneration) return@setOnCompletionListener
                     onPlaybackStateChanged?.invoke(false)
+                    mediaSessionManager.updatePlaybackState()
                     if (currentIndex + 1 < queue.size) {
                         // Còn bài tiếp theo → phát luôn (auto-advance, chạy cả khi app ở background)
                         currentIndex++
                         playCurrent()
                     } else {
-                        // Hết danh sách → dừng, cập nhật notification
-                        updateNotification(false)
+                        // Hết danh sách → dừng, cập nhật notification (icon pause)
+                        refreshNotification()
                     }
                 }
 
@@ -258,6 +300,8 @@ class MusicService : Service(), KoinComponent {
                     isPrepared = false
                     onError?.invoke("Lỗi phát nhạc (code: $what/$extra)")
                     onPlaybackStateChanged?.invoke(false)
+                    mediaSessionManager.updatePlaybackState()
+                    refreshNotification()
                     true // true = đã xử lý lỗi, không throw exception
                 }
 
@@ -293,12 +337,13 @@ class MusicService : Service(), KoinComponent {
             if (player.isPlaying) {
                 player.pause()
                 onPlaybackStateChanged?.invoke(false)
-                updateNotification(false)
             } else {
                 player.start()
                 onPlaybackStateChanged?.invoke(true)
-                updateNotification(true)
             }
+            // Đồng bộ MediaSession + notification theo trạng thái mới
+            mediaSessionManager.updatePlaybackState()
+            refreshNotification()
         }
     }
 
@@ -313,7 +358,8 @@ class MusicService : Service(), KoinComponent {
             if (!player.isPlaying) {
                 player.start()
                 onPlaybackStateChanged?.invoke(true)
-                updateNotification(true)
+                mediaSessionManager.updatePlaybackState()
+                refreshNotification()
             }
         }
     }
@@ -328,7 +374,8 @@ class MusicService : Service(), KoinComponent {
             if (player.isPlaying) {
                 player.pause()
                 onPlaybackStateChanged?.invoke(false)
-                updateNotification(false)
+                mediaSessionManager.updatePlaybackState()
+                refreshNotification()
             }
         }
     }
@@ -356,9 +403,9 @@ class MusicService : Service(), KoinComponent {
     }
 
     /**
-     * Kiểm tra đang phát hay không
+     * Kiểm tra đang phát hay không (MediaStateProvider + PlaybackController dùng chung)
      */
-    fun isPlaying(): Boolean = mediaPlayer?.isPlaying == true
+    override fun isPlaying(): Boolean = mediaPlayer?.isPlaying == true
 
     /**
      * Dừng phát nhạc hoàn toàn
@@ -394,61 +441,26 @@ class MusicService : Service(), KoinComponent {
         }
     }
 
-    /**
-     * Build notification hiển thị bài đang phát + nút điều khiển
-     */
-    private fun buildNotification(isPlaying: Boolean): Notification {
-        // PendingIntent mở app khi bấm notification
-        val openAppIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
-        val openAppPendingIntent = PendingIntent.getActivity(
-            this, 0, openAppIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+    // ================== MediaStateProvider (MediaSessionManager gọi để đọc trạng thái) ==================
 
-        // PendingIntent cho nút Play/Pause
-        val playPauseIntent = Intent(this, MusicService::class.java).apply {
-            action = ACTION_PLAY_PAUSE
-        }
-        val playPausePendingIntent = PendingIntent.getService(
-            this, 1, playPauseIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+    /** Vị trí phát hiện tại (ms) — cho PlaybackState + progress trên lock screen */
+    override fun getCurrentPositionMs(): Long = mediaPlayer?.currentPosition?.toLong() ?: 0L
 
-        // PendingIntent cho nút Stop
-        val stopIntent = Intent(this, MusicService::class.java).apply {
-            action = ACTION_STOP
-        }
-        val stopPendingIntent = PendingIntent.getService(
-            this, 2, stopIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+    /** Tổng thời lượng bài (ms) — 0 nếu chưa biết (chưa prepare xong) */
+    override fun getDurationMs(): Long = mediaPlayer?.duration?.toLong() ?: 0L
 
-        val playPauseIcon = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
-        val playPauseText = if (isPlaying) "Tạm dừng" else "Phát"
+    override fun getTitle(): String = currentTitle
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(currentTitle)
-            .setContentText(currentArtist)
-            .setSmallIcon(R.drawable.ic_music_note)
-            .setContentIntent(openAppPendingIntent)
-            .setOngoing(isPlaying) // ongoing = không vuốt dismiss được khi đang phát
-            .addAction(playPauseIcon, playPauseText, playPausePendingIntent)
-            .addAction(R.drawable.ic_stop, "Dừng", stopPendingIntent)
-            // Không dùng MediaStyle để tránh thêm dependency androidx.media
-            // Notification vẫn hiện đầy đủ nút play/pause + stop
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-    }
+    override fun getArtist(): String = currentArtist
+
+    override fun getArtUrl(): String? = currentArtUrl
 
     /**
-     * Cập nhật notification khi trạng thái thay đổi (play ↔ pause)
+     * Build notification mới rồi cập nhật lên foreground service.
+     * Gọi mỗi khi trạng thái play/pause, bài mới, hoặc ảnh album load xong.
      */
-    private fun updateNotification(isPlaying: Boolean) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, buildNotification(isPlaying))
+    override fun refreshNotification() {
+        startForeground(NOTIFICATION_ID, mediaSessionManager.buildNotification())
     }
 
     /**
@@ -458,6 +470,7 @@ class MusicService : Service(), KoinComponent {
         playbackScope.cancel()
         mediaPlayer?.release()
         mediaPlayer = null
+        mediaSessionManager.release()
         super.onDestroy()
     }
 }

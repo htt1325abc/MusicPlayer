@@ -60,6 +60,20 @@
             android:name=".service.MusicService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- MediaButtonReceiver — nhận nút bấm vật lý từ tai nghe/Bluetooth
+             (ngay cả khi app chạy nền / khóa màn hình), chuyển đến MusicService
+             qua MediaSessionCompat -->
+        <receiver
+            android:name="androidx.media.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.media.session.MediaButtonReceiver.serviceName"
+                android:value="com.example.musicplayer.service.MusicService" />
+        </receiver>
     </application>
 
 </manifest>
