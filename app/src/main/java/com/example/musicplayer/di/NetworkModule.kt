@@ -1,6 +1,8 @@
 package com.example.musicplayer.di
 
+import com.example.musicplayer.network.JamendoConfig
 import com.example.musicplayer.network.MusicApiService
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import org.koin.dsl.module
@@ -21,12 +23,27 @@ import java.util.concurrent.TimeUnit
  */
 val networkModule = module {
 
+    // Interceptor tự động thêm `client_id` vào MỌI request tới Jamendo.
+    // TẠI SAO dùng interceptor thay vì khai báo @Query("client_id") ở từng method?
+    // → client_id giống nhau cho mọi endpoint → chỉ viết 1 chỗ, không lặp lại.
+    // → MusicApiService sạch hơn, chỉ khai báo tham số đặc trưng của từng endpoint.
+    single<Interceptor> {
+        Interceptor { chain ->
+            val original = chain.request()
+            val url = original.url.newBuilder()
+                .addQueryParameter("client_id", JamendoConfig.CLIENT_ID)
+                .build()
+            chain.proceed(original.newBuilder().url(url).build())
+        }
+    }
+
     // OkHttpClient với logging interceptor — dùng `get()`? Không cần, tự tạo.
     single {
         val loggingInterceptor = HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY
         }
         OkHttpClient.Builder()
+            .addInterceptor(get<Interceptor>())
             .addInterceptor(loggingInterceptor)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
@@ -36,7 +53,7 @@ val networkModule = module {
     // Retrofit — `get()` lấy OkHttpClient Koin vừa tạo ở trên.
     single {
         Retrofit.Builder()
-            .baseUrl("http://127.0.0.1:3000/")
+            .baseUrl(JamendoConfig.BASE_URL)
             .client(get())
             .addConverterFactory(GsonConverterFactory.create())
             .build()

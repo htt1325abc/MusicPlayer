@@ -2,448 +2,479 @@
 
 > File này giải thích **code thật trong project** (không phải lý thuyết chung chung) để bạn ôn trước khi bảo vệ đồ án.
 > Đọc kèm các file được trích dẫn để nắm chắc.
+> ⚠️ **Đã cập nhật 2026-08-19** sau khi refactor **Phần 3** (áp dụng convention project MẪU `DIYWallpaper_Kotlin`):
+> thêm base class `common/`, pattern `onState()`, Repository interface/impl, Room cho "Nghe gần đây" + "Yêu thích" + "Playlist đã lưu".
 
 ---
 
 ## 0. Tóm tắt 1 câu
 
-**MusicPlayer** là app Android phát nhạc trực tuyến theo kiến trúc **MVVM + Repository Pattern**, dùng **Retrofit/OkHttp** gọi một **server Node.js proxy** (gói `zingmp3-api-full`) để lấy bài hát & link mp3, phát nhạc bằng **MediaPlayer** bên trong một **Foreground + Bound Service**, và dùng **Koin** để quản lý dependency.
+**MusicPlayer** là app Android phát nhạc trực tuyến theo kiến trúc **MVVM + Repository Pattern + Clean Architecture rút gọn** (có `common/` base class, `domain/` interface, `data/` impl), dùng **Koin** quản lý dependency, **Retrofit/OkHttp** gọi một **server Node.js proxy** (`zingmp3-api-full`) để lấy bài hát & link mp3, phát nhạc bằng **MediaPlayer** + **MediaSessionCompat** bên trong một **Foreground + Bound Service**, và dùng **Room** để lưu "Nghe gần đây", "Yêu thích" và "Playlist đã lưu".
 
 ---
 
 ## 1. Tổng quan kiến trúc
 
-### 1.1 Công nghệ sử dụng (đã khai báo trong `gradle/libs.versions.toml` + `app/build.gradle.kts`)
+### 1.1 Công nghệ sử dụng (`gradle/libs.versions.toml` + `app/build.gradle.kts`)
 
 | Thành phần | Thư viện / version | Dùng để làm gì |
 |---|---|---|
 | UI | Material 3 (`com.google.android.material` 1.14.0) | Theme dark, Toolbar, TextInputLayout |
-| Danh sách | RecyclerView 1.4.0 | List + DiffUtil |
+| Danh sách | RecyclerView 1.4.0 | List + DiffUtil (`ListAdapter`) |
+| ViewBinding | `buildFeatures { viewBinding = true }` | Truy cập view type-safe, không `findViewById` |
 | Network | Retrofit 2.11.0 + OkHttp 4.12.0 + Gson 2.11.0 | Gọi REST API, log request/response |
-| Ảnh | Glide 4.16.0 | Load & cache thumbnail từ URL |
+| Ảnh | Glide 4.16.0 | Load & cache thumbnail, album art |
 | Bất đồng bộ | Coroutines 1.10.2 | `suspend`, `viewModelScope`, `StateFlow` |
 | Lifecycle | `lifecycle-viewmodel-ktx` 2.9.1 | ViewModel, `repeatOnLifecycle` |
 | DI | Koin 3.5.6 (`io.insert-koin:koin-android`) | Quản lý dependency tập trung |
-| Audio | `MediaPlayer` (Android SDK) | Phát nhạc — không cần thư viện ngoài |
-| Server | Node.js + Express + `zingmp3-api-full` v1.0.14 | Proxy trung gian tới ZingMP3 |
+| Local DB | **Room 2.7.1** (runtime + ktx + compiler) | Lưu recent / favorite / saved playlist |
+| Code-gen | **KSP 2.3.9** | Chạy Room compiler (`@Dao`/`@Database`) lúc build |
+| Media | **androidx.media 1.7.0** (`NotificationCompat.MediaStyle`) | MediaSession + notification media controls |
+| Audio | `MediaPlayer` (Android SDK) + `MediaSessionCompat` | Phát nhạc + điều khiển từ lock screen/tai nghe |
+| Server | Node.js + Express + `zingmp3-api-full` v1.0.14 | Proxy trung gian tới ZingMP3 (port 3000) |
 
-### 1.2 Các package / layer trong project
+> ⚠️ Khác project MẪU: mẫu dùng **DataBinding + Koin 4.0.0** (`viewModelOf`); project này dùng **ViewBinding + Koin 3.5.6** (`viewModel { X(get(), ...) }`). Cùng tinh thần, khác cú pháp — xem mục 2.4.
+
+### 1.2 Cấu trúc package / layer (SAU refactor Phần 3)
 
 Package gốc: `com.example.musicplayer` (`app/src/main/java/com/example/musicplayer/`)
 
-| Package | Layer | Vai trò |
+```
+com.example.musicplayer/
+├── App.kt                  ── Application — startKoin (đăng ký 4 module)
+├── common/                 ⭐ BASE CLASS dùng chung: IActivity, IViewModel, ResultFlow
+├── data/
+│   ├── local/              ⭐ ROOM: MusicDatabase v2, Migrations, dao/, entities/, mapper/, repository/
+│   └── repository/         ── MusicRepositoryImpl (implementation)
+├── domain/
+│   └── repository/         ⭐ MusicRepository (INTERFACE)
+├── di/                     ── 4 Koin module: network / repository / service / viewModel
+├── model/                  ── data class DTO map với JSON (`SongItem`, `PlaylistItem`, `StreamData`...)
+├── network/                ── MusicApiService (endpoint), RetrofitClient (⚠️ dead code — xem 4.2)
+├── presenter/              ⭐ UI theo FEATURE (giống mẫu): base/, home/, search/, songlist/
+│   ├── base/BasePlayerActivity.kt
+│   ├── home/HomeActivity.kt + HomeViewModel.kt
+│   ├── search/MainActivity.kt + MusicViewModel.kt
+│   └── songlist/SongListActivity.kt + PlaylistViewModel.kt
+├── adapter/                ── SongAdapter, RecentSongAdapter, GenreAdapter, PlaylistAdapter
+├── service/                ── MusicService, MediaSessionManager, PlaybackController, MusicPlaybackController
+└── res/                    ── Layout XML, drawable, menu, theme
+```
+
+| Layer | Package | Vai trò |
 |---|---|---|
-| `App.kt` | — | `Application` — khởi động Koin ngay khi app chạy |
-| `network/` | Data layer | `MusicApiService` (khai báo endpoint), `RetrofitClient` (tạo Retrofit) |
-| `repository/` | Data layer | `MusicRepository` (gọi API, bọc `Result<T>`), `RecentPlayedStore` (lưu "nghe gần đây") |
-| `model/` | Model | Các `data class` map với JSON server trả về (`SongItem`, `PlaylistItem`, `StreamData`...) |
-| `di/` | — | 3 Koin module: `networkModule`, `repositoryModule`, `viewModelModule` |
-| `viewmodel/` | ViewModel layer | `MusicViewModel` (cũ), `HomeViewModel`, `PlaylistViewModel` (mới, dùng Koin) |
-| `ui/` | View layer | `HomeActivity`, `SongListActivity`, `BasePlayerActivity` |
-| `adapter/` | View layer | `SongAdapter`, `RecentSongAdapter`, `GenreAdapter`, `PlaylistAdapter` |
-| `service/` | — | `MusicService` — Foreground + Bound service phát nhạc + auto-advance |
-| `MainActivity.kt` | View layer | Màn hình tìm kiếm **cũ** (DI thủ công, giữ lại để so sánh) |
-| `res/` | — | Layout XML, drawable, menu, theme |
-| `server/` (ngoài app) | — | Server Node.js proxy ZingMP3, chạy port 3000 |
+| **Base / Cross-cutting** | `common/` | Base class + wrapper state — dùng xuyên suốt mọi màn hình |
+| **Domain** | `domain/repository/` | Interface repository (hợp đồng, không biết data từ đâu) |
+| **Data** | `data/local/` (Room), `data/repository/` (impl) | Đọc/ghi DB, gọi API — **nơi DUY NHẤT biết chi tiết** |
+| **Presentation** | `presenter/<feature>/` | Activity + ViewModel đi chung 1 feature package |
+| **Service** | `service/` | Phát nhạc nền, media session, notification |
+| **DI** | `di/` | 4 Koin module nối tất cả lại |
 
-> ⚠️ Project **chưa có package `domain/` riêng** (không có UseCase/Interactor). Đây là MVVM rút gọn: `View → ViewModel → Repository → Network`. Khi được hỏi, bạn nói rõ "đồ án dùng MVVM đơn giản, không tách thêm tầng domain cho gọn".
+> ✅ So với bản cũ (trước Phần 3): `viewmodel/`+`ui/` → gộp thành `presenter/<feature>/`; `repository/` → tách `domain/repository/` (interface) + `data/repository/` (impl) + `data/local/repository/` (local repo Room); **không còn SharedPreferences** — "Nghe gần đây" đã chuyển sang Room.
 
-### 1.3 Sơ đồ phụ thuộc (ai gọi ai)
+### 1.3 Sơ đồ phụ thuộc (ai gọi ai — chiều mũi tên đi XUỐNG)
 
 ```
-┌──────────────────────────  VIEW LAYER (Activity)  ──────────────────────────┐
-│                                                                             │
-│  HomeActivity (launcher) ──mở──► SongListActivity ──mở──► MainActivity (cũ) │
-│        │  extends                │  extends              │                  │
-│        ▼                         ▼                       ▼                  │
-│  BasePlayerActivity (bind MusicService + mini player + playQueue)           │
+┌────────────────────────  VIEW LAYER (presenter/)  ──────────────────────────┐
+│  HomeActivity (launcher) ──mở──► SongListActivity ──mở──► MainActivity     │
+│        │  extends              │  extends              │  extends          │
+│        ▼                       ▼                       ▼                  │
+│  BasePlayerActivity (extends IActivity: bind service + mini player + playQueue)│
 └───────────┬──────────────────────┬──────────────────────────────────────────┘
-            │ 1. bấm bài → playQueue()     │ 2. observe StateFlow
-            ▼                              ▼
-┌──────────────────  VIEWMODEL LAYER  ────────────────────────────────────────┐
-│  HomeViewModel (Koin: by viewModel)     PlaylistViewModel (Koin)            │
-│  MusicViewModel (CŨ: ViewModelProvider, tự new repository)                  │
+            │ onState(State.X)     │ observe StateFlow (Room Flow)
+            ▼                      ▼
+┌────────────────  VIEWMODEL LAYER (IViewModel<State> + onState)  ────────────┐
+│  HomeViewModel<HomeState>  PlaylistViewModel<PlaylistState>  MusicViewModel<MusicState>│
 └───────────┬─────────────────────────────────────────────────────────────────┘
-            │ 3. gọi suspend fun
+            │ suspend fun
             ▼
-┌──────────────────  DATA LAYER (Repository)  ────────────────────────────────┐
-│  MusicRepository ──► MusicApiService (Retrofit) ──► OkHttp ──► server:3000  │
-│  RecentPlayedStore (SharedPreferences — lưu lịch sử nghe)                   │
+┌────────────────  DOMAIN (interface)  ───────────────────────────────────────┐
+│  MusicRepository (interface — chỉ khai báo, không có code)                 │
 └───────────┬─────────────────────────────────────────────────────────────────┘
-            │ 4. link mp3
             ▼
-┌──────────────────  SERVICE LAYER  ──────────────────────────────────────────┐
-│  MusicService (Foreground + Bound)                                          │
-│    ├─ MediaPlayer (phát nhạc)                                               │
-│    ├─ by inject() MusicRepository (tự lấy URL bài kế tiếp khi auto-advance) │
-│    └─ Notification (nút Play/Pause/Stop)                                    │
+┌────────────────  DATA (implementation)  ────────────────────────────────────┐
+│  MusicRepositoryImpl ─► MusicApiService (Retrofit) ─► server:3000          │
+│                       ─► FavoriteSongDao / PlaylistDao (Room)              │
+│  RecentPlayedStore   ─► RecentSongDao (Room)                               │
+└───────────┬─────────────────────────────────────────────────────────────────┘
+            ▼
+┌────────────────  SERVICE LAYER  ────────────────────────────────────────────┐
+│  MusicService (Foreground + Bound)                                         │
+│    ├─ MediaPlayer (phát nhạc)  +  MediaSessionManager (notification/Media) │
+│    └─ by inject() MusicRepository (tự lấy URL bài kế khi auto-advance)     │
+│  PlaybackController (interface) ← MusicPlaybackController (Koin single)    │
 └─────────────────────────────────────────────────────────────────────────────┘
-
-Quy tắc phụ thuộc (theo chiều mũi tên đi XUỐNG):
-  Activity → ViewModel → Repository → ApiService → server
-  Activity → Service (bind qua Binder)
-  Service → Repository (Koin inject — để tự auto-advance khi chạy nền)
-  ViewModel/Activity ← Repository ← ApiService  (dữ liệu trả về ngược lên)
 ```
 
-**Nguyên tắc quan trọng nhất:** View không gọi thẳng API, ViewModel không tự `new` repository lung tung (bản cũ MainActivity làm vậy — đó là "kiểu cũ" để so sánh), và **Service là nơi DUY NHẤT giữ MediaPlayer**.
+**Quy tắc phụ thuộc:**
+```
+Activity → ViewModel.onState() → MusicRepository(interface) → MusicRepositoryImpl → ApiService/server + Room
+Activity → BasePlayerActivity → bind MusicService (Binder)
+ViewModel → PlaybackController(interface) → MusicPlaybackController → MusicService.next()/previous()
+Service  → MusicRepository (Koin inject — để tự auto-advance khi chạy nền)
+Dữ liệu trả về đi NGƯỢC lên: server/Room → Repository → ViewModel (StateFlow) → UI
+```
+
+**Nguyên tắc quan trọng nhất:** View không gọi thẳng API; ViewModel **không giữ reference Service** (chỉ giữ `PlaybackController` interface); **Service là nơi DUY NHẤT giữ MediaPlayer**; Repository chia **interface (domain)** và **impl (data)**.
 
 ---
 
 ## 2. Đi qua từng thành phần quan trọng
 
-Mỗi mục gồm: **nhiệm vụ → caller (ai gọi) → callee (gọi tới ai) → xóa thì hỏng gì**.
+> Format: **nhiệm vụ → caller → callee → xóa thì hỏng gì**.
 
 ### 2.1 `App.kt` — khởi động Koin
 
-- **Nhiệm vụ:** `class App : Application()`, trong `onCreate()` gọi `startKoin { androidLogger(Level.INFO); androidContext(this@App); modules(networkModule, repositoryModule, viewModelModule) }`.
-- **Caller:** Hệ điều hành Android gọi `onCreate()` trước mọi Activity/Service. App được khai báo trong manifest: `android:name=".App"`.
-- **Callee:** `startKoin(...)` đăng ký 3 module DI.
-- **Xóa thì hỏng gì:** Mọi thứ dùng Koin sẽ crash ngay lập tức với lỗi *"KoinApplication has not been started"* — `HomeViewModel`, `PlaylistViewModel`, `RecentPlayedStore`, `MusicRepository` trong `MusicService` đều không inject được.
-- **Trả lời khi bị hỏi:** *"Koin phải được start ở Application.onCreate() vì nó chạy trước tất cả Activity/Service, nên khi bất kỳ màn hình nào cần inject thì Koin đã sẵn sàng."*
+- **Nhiệm vụ:** `class App : Application()`, `onCreate()` gọi:
+  ```kotlin
+  startKoin {
+      androidLogger(Level.INFO)
+      androidContext(this@App)          // cung cấp Application/Context cho Koin
+      modules(networkModule, repositoryModule, serviceModule, viewModelModule)
+  }
+  ```
+- **Caller:** Hệ điều hành Android (khai báo `android:name=".App"` trong manifest).
+- **Callee:** `startKoin` đăng ký **4 module** DI.
+- **Xóa thì hỏng:** mọi thứ dùng Koin crash ngay — *"KoinApplication has not been started"*.
+- **Trả lời khi bị hỏi:** *"Koin phải start ở Application.onCreate() vì nó chạy trước mọi Activity/Service, nên khi bất kỳ màn hình nào inject thì Koin đã sẵn sàng."*
 
-### 2.2 `network/` — Retrofit + OkHttp
+### 2.2 `common/` — Base class (⭐ học từ project MẪU)
 
-**`MusicApiService.kt`** (interface):
-- **Nhiệm vụ:** Khai báo 5 endpoint bằng annotation Retrofit:
-  - `@GET("api/search") searchSongs(@Query("q") query): ApiResponse<List<SongItem>>`
-  - `@GET("api/song/{id}/stream") getStreamUrl(@Path("id") songId): ApiResponse<StreamData>`
-  - `@GET("api/chart") getChart(): ApiResponse<List<ChartData>>`
-  - `@GET("api/playlist/{id}") getPlaylistDetail(@Path("id") playlistId): ApiResponse<PlaylistData>`
-  - `@GET("api/playlists") getFeaturedPlaylists(): ApiResponse<List<PlaylistItem>>`
-- Tất cả là `suspend fun` → chạy bất đồng bộ không block main thread.
-- **Caller:** `MusicRepository`.
-- **Callee:** server Node.js ở `http://127.0.0.1:3000/`.
-- **Xóa thì hỏng:** toàn bộ app không lấy được dữ liệu (Repository compile lỗi).
+| File | Vai trò |
+|---|---|
+| `common/IViewModel.kt` | Base ViewModel. |
+| `common/IActivity.kt` | Base Activity (template method). |
+| `common/ResultFlow.kt` | Sealed class bọc trạng thái tải dữ liệu. |
 
-**`RetrofitClient.kt`** (object singleton):
-- **Nhiệm vụ:** Tạo 1 instance `Retrofit` + `OkHttpClient` (có `HttpLoggingInterceptor` level BODY, timeout 30s), expose `apiService`.
-- **Caller:** `MusicRepository` dùng làm **default parameter**: `class MusicRepository(private val apiService: MusicApiService = RetrofitClient.apiService)`. Tức là chỉ còn màn hình cũ (`MusicViewModel`) dùng default này; màn hình mới dùng Koin.
-- **Xóa thì hỏng:** `MusicRepository` không có default → `MusicViewModel` (cũ) không compile được (nếu không sửa).
-- ⚠️ **Điểm yếu cần biết:** Có **2 chỗ tạo Retrofit**: `RetrofitClient.kt` và `di/NetworkModule.kt` — kèm theo đó **BASE_URL bị lặp 2 lần**. Nếu đổi URL phải đổi cả 2 chỗ. Đây là code "đang chuyển tiếp" từ style cũ sang Koin.
+**`IViewModel.kt`** — `abstract class IViewModel<State : IViewModel.IState>(application: Application) : AndroidViewModel(application)`:
+- **Nhiệm vụ:**
+  - `abstract fun onState(state: State)` — **pattern COMMAND**: UI gửi sealed-class State, ViewModel `when(state)` xử lý. (Không còn Activity gọi hàm public trực tiếp.)
+  - `protected fun launchBlock(dispatcher = Main.immediate)`: chạy coroutine trong `viewModelScope` kèm `CoroutineExceptionHandler` (log lỗi, không crash).
+  - `protected suspend fun withIO()/withMain()`: đổi thread.
+  - `private _isLoading : MutableStateFlow<Boolean>` + `internal val isLoading` + `fun setLoading()` — mọi màn hình tự show/hide loading.
+  - `protected fun toast()/string()`.
+  - `interface IState` — marker cho sealed class State của từng màn hình.
+- **Caller:** `HomeViewModel`/`PlaylistViewModel`/`MusicViewModel` kế thừa và implement `onState`.
+- **Callee:** Activity gọi `viewModel.onState(...)`.
+- **Xóa thì hỏng:** 3 ViewModel không compile được; mất pattern thống nhất.
+- ⚠️ **Khác mẫu:** mẫu cho `IViewModel` kế thừa thêm `KoinComponent` (để tự `by inject()` trong VM). Project này bỏ vì mọi dependency đều qua **constructor** (Koin bơm) — không cần.
 
-### 2.3 `repository/` — Data layer
+**`IActivity.kt`** — `abstract class IActivity<VB : ViewBinding, VM : IViewModel<State>, State : IViewModel.IState> : AppCompatActivity()`:
+- **Nhiệm vụ:** ép mọi màn hình theo template:
+  ```
+  onCreate → setupInit() → setContentView(viewBinding.root) → initViews() → initObservers() → initListeners()
+  ```
+  - `abstract getLazyViewModel(): Lazy<VM>` — thường `viewModel<HomeViewModel>()`.
+  - `abstract getLazyViewBinding(): Lazy<VB>` — thường `lazy { ActivityXBinding.inflate(layoutInflater) }`.
+  - `protected fun observerLoadingState(onLoading, onLoaded)` — collect `viewModel.isLoading` theo lifecycle STARTED.
+- **Caller:** `BasePlayerActivity` kế thừa (→ HomeActivity/SongListActivity/MainActivity).
+- **Xóa thì hỏng:** các Activity mất template + loading chung.
 
-**`MusicRepository.kt`**:
-- **Nhiệm vụ:** Trung gian giữa ViewModel/Service và Network. Mỗi hàm gọi API, kiểm tra `response.success && response.data != null`, rồi bọc vào `Result<T>` (success chứa dữ liệu, failure chứa `Exception`).
-- Các hàm: `searchSongs(query)`, `getStreamUrl(songId)`, `getChart()`, `getPlaylist(playlistId)`, `getFeaturedPlaylists()`.
-- Trong `getStreamUrl`: gọi `response.data.getBestStreamUrl()` (hàm này trong `StreamData` — ưu tiên 320, fallback 128, **lọc chuỗi "VIP"**) → nếu `null` thì trả `Result.failure(Exception("Bài hát VIP..."))`.
-- **Caller:**
-  - `MusicViewModel` (tự `MusicRepository()` — kiểu cũ)
-  - `HomeViewModel`, `PlaylistViewModel` (Koin `get()` bơm vào constructor)
-  - `MusicService` (`by inject()` — để tự lấy URL bài kế tiếp khi auto-advance)
-- **Callee:** `MusicApiService`.
-- **Xóa thì hỏng:** không gọi được bất kỳ API nào — mọi màn hình đều hiện lỗi/trống.
+**`ResultFlow.kt`** — sealed class `Initial / Loading(info) / Success(data) / Error(msg)` + extension `doOnSuccess/doOnLoading/doOnError`. Dự phòng cho màn hình cần phân biệt rõ trạng thái (hiện các màn hình dùng StateFlow như mẫu).
 
-**`RecentPlayedStore.kt`**:
-- **Nhiệm vụ:** Lưu/đọc danh sách "Nghe gần đây" bằng **SharedPreferences** (file `recent_played`), lưu dạng JSON qua Gson, giới hạn 20 bài, bài mới chèn lên đầu, xóa trùng `encodeId`.
-- **Caller:** `HomeViewModel.loadRecent()` (đọc), `BasePlayerActivity.playQueue()` (ghi khi phát bài).
-- **Callee:** SharedPreferences + Gson.
-- **Xóa thì hỏng:** section "Nghe gần đây" trên Home trống và không lưu được lịch sử. (App vẫn chạy được — đây là tính năng phụ, không phải lõi.)
+### 2.3 `network/` — Retrofit + OkHttp
 
-### 2.4 `di/` — 3 Koin module + thứ tự khởi tạo THẬT
+**`MusicApiService.kt`** (interface) — 5 endpoint `suspend fun`:
+- `@GET("api/search") searchSongs(@Query("q") query): ApiResponse<List<SongItem>>`
+- `@GET("api/song/{id}/stream") getStreamUrl(@Path("id") songId): ApiResponse<StreamData>`
+- `@GET("api/chart") getChart(): ApiResponse<List<ChartData>>`
+- `@GET("api/playlist/{id}") getPlaylistDetail(@Path("id") playlistId): ApiResponse<PlaylistData>`
+- `@GET("api/playlists") getFeaturedPlaylists(): ApiResponse<List<PlaylistItem>>`
+- **Caller:** `MusicRepositoryImpl`. **Callee:** server `http://127.0.0.1:3000/`.
+
+**`RetrofitClient.kt`** (object singleton) — ⚠️ **HIỆN LÀ DEAD CODE**: sau refactor, mọi nơi dùng Koin (`NetworkModule`), không file nào gọi `RetrofitClient.apiService` nữa. Giữ lại như "bản cũ để so sánh", nhưng nên xóa khi có dịp (xem 4.2).
+
+### 2.4 `di/` — 4 Koin module + cách khởi tạo THẬT
 
 **`NetworkModule.kt`** (`networkModule`):
 ```kotlin
-single { OkHttpClient.Builder()...build() }          // (1) tự tạo
-single { Retrofit.Builder().baseUrl("...").client(get())...build() }  // (2) get() lấy (1)
-single { get<Retrofit>().create(MusicApiService::class.java) }        // (3) get() lấy (2)
+single { OkHttpClient.Builder()...build() }                          // (1) tự tạo
+single { Retrofit.Builder().baseUrl("...").client(get())...build() } // (2) get() = (1)
+single { get<Retrofit>().create(MusicApiService::class.java) }       // (3) get() = (2)
 ```
 
-**`RepositoryModule.kt`** (`repositoryModule`):
+**`RepositoryModule.kt`** (`repositoryModule`) — **đăng ký cả Room + Repository**:
 ```kotlin
-single { RecentPlayedStore(androidContext()) }   // dùng Application context (an toàn, không leak)
-single { MusicRepository(get()) }                // get() = MusicApiService từ networkModule
+single { Room.databaseBuilder(androidContext(), MusicDatabase::class.java, DATABASE_NAME)
+             .addMigrations(*Migrations.ALL_MIGRATIONS).build() }     // (1) Room DB
+single { get<MusicDatabase>().recentSongDao() }                       // (2) 3 DAO
+single { get<MusicDatabase>().favoriteSongDao() }
+single { get<MusicDatabase>().playlistDao() }
+single { RecentSongMapper() } ; single { FavoriteSongMapper() } ; single { PlaylistMapper() } // (3) mapper
+single { RecentPlayedStore(get(), get()) }                            // (4) local repo (DAO + Mapper)
+singleOf(::MusicRepositoryImpl) bind MusicRepository::class           // (5) ⭐ interface ← impl
 ```
+- ⭐ `singleOf(::MusicRepositoryImpl) bind MusicRepository::class` — giống mẫu `singleOf(...) bind Interface::class`. Mọi nơi inject `MusicRepository` đều nhận đúng 1 impl duy nhất. Koin tự `get()` các tham số constructor của `MusicRepositoryImpl` (ApiService, DAO, Mapper).
+
+**`ServiceModule.kt`** (`serviceModule`):
+```kotlin
+single<PlaybackController> { MusicPlaybackController() }
+```
+- ⚠️ Khai báo theo **INTERFACE** `PlaybackController`. Nếu khai báo class cụ thể, inject interface sẽ `NoBeanDefFoundException` (đã từng crash).
 
 **`ViewModelModule.kt`** (`viewModelModule`):
 ```kotlin
-viewModel { HomeViewModel(get(), get()) }        // get() = MusicRepository + RecentPlayedStore
-viewModel { PlaylistViewModel(get()) }           // get() = MusicRepository
+viewModel { HomeViewModel(get(), get(), get(), get()) }     // Application + MusicRepository + RecentPlayedStore + PlaybackController
+viewModel { PlaylistViewModel(get(), get(), get()) }        // Application + MusicRepository + PlaybackController
+viewModel { MusicViewModel(get(), get(), get()) }           // Application + MusicRepository + PlaybackController
 ```
+- `get()` đầu tiên resolve **Application** (để `IViewModel` extends `AndroidViewModel`) — do `androidContext()` đăng ký sẵn.
+- ⚠️ Mẫu dùng `viewModelOf(::HomeViewModel)` (Koin 4); project pin Koin 3.5.6 → dùng DSL tương đương `viewModel { X(get(), ...) }`.
 
-**Thứ tự khởi tạo THỰC TẾ (quan trọng để trả lời bảo vệ):**
-- Koin **không** "chạy lần lượt từng module" tại `startKoin()`. `startKoin` chỉ **đăng ký công thức** (definition) vào container.
-- Dependency được tạo **lười (lazy)** — lần ĐẦU TIÊN được yêu cầu. Ví dụ khi `HomeActivity` gọi `by viewModel<HomeViewModel>()`:
-  1. Koin tìm `HomeViewModel` trong `viewModelModule`.
-  2. Nó cần 2 tham số → Koin tìm `MusicRepository` và `RecentPlayedStore` trong `repositoryModule`.
-  3. `MusicRepository` cần `MusicApiService` → Koin tìm trong `networkModule`.
-  4. `MusicApiService` cần `Retrofit` → tạo Retrofit; Retrofit cần `OkHttpClient` → tạo OkHttpClient.
-  5. Xong hết các dependency lá → Koin "đi ngược lên" tạo từng cái, cuối cùng tạo `HomeViewModel` và gắn vào `ViewModelStore` của Activity.
-- Kết quả: **mỗi `single {}` chỉ tồn tại 1 instance** dùng chung toàn app; **mỗi `viewModel {}` gắn với vòng đời của Activity** (không bị mất khi xoay màn hình).
+**Cách Koin hoạt động (quan trọng để trả lời bảo vệ):**
+- `startKoin()` chỉ **đăng ký công thức** (definition). Dependency tạo **lười (lazy)** — lần đầu được yêu cầu.
+- Khi `HomeActivity` gọi `by viewModel<HomeViewModel>()`, Koin: tìm định nghĩa → thấy cần 4 tham số → lần lượt tạo `Application` (có sẵn), `MusicRepository` (→ `MusicRepositoryImpl` → `MusicApiService` → `Retrofit` → `OkHttpClient`), `RecentPlayedStore` (→ `RecentSongDao` → `MusicDatabase`), `PlaybackController` (→ `MusicPlaybackController`) → gắn VM vào `ViewModelStore` của Activity.
+- `single {}` = 1 instance toàn app; `viewModel {}` = gắn vòng đời Activity.
 
-> 🧠 **Cách giải thích gọn khi bị hỏi "Koin hoạt động thế nào?":**
-> "Koin là dependency container. Tôi khai báo 'cách tạo' từng object trong module. Khi Activity cần ViewModel, Koin tự nhìn vào constructor của nó, tự tạo hết các dependency phía sau (Repository → ApiService → Retrofit → OkHttpClient), rồi bơm vào. Tôi không phải tự `new` gì cả — đó gọi là Inversion of Control."
+### 2.5 `data/local/` — Room (⭐ thay SharedPreferences)
 
-### 2.5 `viewmodel/` — 3 ViewModel
+**`MusicDatabase.kt`** — `@Database(entities = [RecentSongEntity, FavoriteSongEntity, PlaylistEntity], version = 2, exportSchema = false)`. `DATABASE_NAME = "music_player.db"`.
 
-**`MusicViewModel.kt`** (CŨ — màn hình MainActivity):
-- Tự `private val repository = MusicRepository()` → **kiểu cũ, không Koin** (giữ để so sánh).
-- State: `songs`, `isLoading`, `errorMessage`, `currentSong`, `streamUrl` (đều là `MutableStateFlow` + expose `asStateFlow()`).
-- `search(query)`: **debounce 500ms** bằng `searchJob?.cancel()` + `delay(500)` → gọi `repository.searchSongs`.
-- `playSong(song)`: lưu `currentQueue = _songs.value` (danh sách đang hiển thị — để Service tự phát bài tiếp), fetch `getStreamUrl`, đẩy vào `_streamUrl`.
-- `getCurrentQueue()`: trả danh sách đang hiển thị cho MainActivity đưa vào Service.
-- `onStreamUrlConsumed()`: reset `_streamUrl = null` (tránh phát lại bài cũ khi observe lại).
+| Entity | Bảng | Field đặc trưng | Mục đích |
+|---|---|---|---|
+| `RecentSongEntity` | `recent_songs` | `encodeId` (PK), `playedAt` | "Nghe gần đây" |
+| `FavoriteSongEntity` | `favorite_songs` | `encodeId` (PK), `addedAt` | "Yêu thích" |
+| `PlaylistEntity` | `saved_playlists` | `encodeId` (PK), `songCount`, `savedAt` | "Playlist đã lưu" (Phần 3) |
 
-**`HomeViewModel.kt`** (MỚI — Koin):
-- Constructor `(repository: MusicRepository, recentStore: RecentPlayedStore)` → Koin bơm.
-- `genres` = `GenreItem.all` (tĩnh, không cần API).
-- `loadHome()`: `repository.getFeaturedPlaylists()` → `_featuredPlaylists`.
-- `loadRecent()`: `recentStore.getRecent()` → `_recentSongs`.
-- `init {}` gọi luôn 2 hàm trên khi ViewModel được tạo.
+**`Migrations.kt`** — `MIGRATION_1_2`: `CREATE TABLE IF NOT EXISTS saved_playlists (...)`. Version 1 → 2 thêm bảng playlist mà **không mất dữ liệu cũ** (recent/favorite giữ nguyên).
 
-**`PlaylistViewModel.kt`** (MỚI — Koin):
-- Constructor `(repository: MusicRepository)` → Koin bơm.
-- `loadPlaylist(id)`: `repository.getPlaylist(id)` → `_title` + `_songs` (dùng cho mode PLAYLIST).
-- `searchSongs(keyword)`: `repository.searchSongs(keyword)` → `_songs` (dùng cho mode SEARCH theo thể loại).
-- `setTitle(title)`: set tiêu đề toolbar.
+**`dao/`** — `RecentSongDao`, `FavoriteSongDao`, `PlaylistDao`:
+- `@Insert(onConflict = REPLACE)` — ghi đè theo `encodeId` (không trùng).
+- `@Query("... ORDER BY x DESC") fun observeAll(): Flow<List<Entity>>` — **trả Flow** → UI tự cập nhật khi bảng đổi (single source of truth).
+- `getById`, `deleteById`, `clear`.
 
-**Nếu xóa từng cái:**
-- `MusicViewModel` → MainActivity hỏng (không search, không phát được từ màn hình cũ).
-- `HomeViewModel` → HomeActivity hỏng (không load playlist/recent).
-- `PlaylistViewModel` → SongListActivity hỏng (không load danh sách bài).
+**`mapper/`** — `interface Mapper<Entity, Model> { toModel(entity); toEntity(model) }` + `RecentSongMapper`, `FavoriteSongMapper`, `PlaylistMapper`. Chuyển Entity ↔ Model (trước đây là extension function trong file entity).
 
-### 2.6 `service/MusicService.kt` — trái tim của app
+**`repository/RecentPlayedStore.kt`** — local repository bọc `RecentSongDao` + `RecentSongMapper`:
+- `observeRecent(): Flow<List<SongItem>>` (giới hạn 20), `getRecentSnapshot()`, `add(song)`.
+- **Caller:** `HomeViewModel` (observe), `BasePlayerActivity.playQueue()` (ghi khi phát bài).
 
-**Vòng đời:**
-- Là **Bound Service** (`onBind` trả về `MusicBinder`) + **Foreground Service** (khi phát, gọi `startForeground(NOTIFICATION_ID, notification)` với `foregroundServiceType="mediaPlayback"`).
-- `onCreate()`: tạo NotificationChannel (Android 8+).
-- `onStartCommand()`: chỉ xử lý action từ notification (PLAY_PAUSE / STOP), trả `START_NOT_STICKY` (không tự restart khi bị kill).
-- `onDestroy()`: `playbackScope.cancel()` + `mediaPlayer?.release()`.
+### 2.6 `domain/repository/` + `data/repository/` — Repository pattern (interface/impl)
 
-**Tại sao Bound + Foreground?**
-- **Bound (Binder):** Activity cần gọi trực tiếp method của service (`playQueue`, `togglePlayPause`, `stopPlayback`, `isPlaying`).
-- **Foreground:** Android 8+ giết background service sau vài phút; foreground service hiện notification → không bị giết → nhạc chạy khi app ở background/khóa màn hình.
+**`domain/repository/MusicRepository.kt`** (INTERFACE):
+- Network: `searchSongs`, `getStreamUrl`, `getChart`, `getPlaylist`, `getFeaturedPlaylists` → đều trả `Result<T>`.
+- Room: `observeFavorites(): Flow`, `isFavorite`, `toggleFavorite`, `observeSavedPlaylists(): Flow`, `isSavedPlaylist`, `toggleSavePlaylist`.
 
-**Các thành phần chính:**
-- `queue: List<SongItem>` + `currentIndex` → **hàng đợi phát** (tính năng auto-advance).
-- `currentSong` (private set) + `onSongChanged` callback → báo Activity cập nhật mini player khi **tự chuyển bài**.
-- `isPrepared` flag → chặn lỗi "start called in state 4" (gọi `start()` khi đang buffer).
-- `playbackGeneration` (tăng mỗi lần `playInternal`) → bỏ qua callback của player cũ đã release.
-- `repository: MusicRepository by inject()` → Koin bơm, vì Service là `KoinComponent`.
+**`data/repository/MusicRepositoryImpl.kt`** (IMPL):
+- Constructor nhận `MusicApiService` + `FavoriteSongDao` + `PlaylistDao` + `FavoriteSongMapper` + `PlaylistMapper` (Koin bơm).
+- Network method: gọi API, kiểm tra `response.success && data != null` → `Result.success/failure`.
+- `getStreamUrl`: gọi `StreamData.getBestStreamUrl()` (ưu tiên 320, fallback 128, **lọc chuỗi "VIP"**).
+- Room method: `dao.observeAll().map { mapper.toModel }` (Flow) / `toggleX` = getById → insert hoặc delete.
 
-**Các hàm chính (ai gọi gì):**
-- `playQueue(songs, startIndex, preFetchedUrl?)` — **được Activity gọi** khi user bấm bài. Đặt queue + index, fire `onSongChanged`, rồi phát thẳng (`preFetchedUrl` có sẵn) hoặc `playCurrent()`.
-- `playCurrent()` — tự lấy URL qua `repository.getStreamUrl(song.encodeId)` trên `playbackScope`, thành công → `playInternal`, thất bại → **tự nhảy sang bài kế tiếp** (bỏ qua bài VIP/lỗi).
-- `playInternal(url, title, artist)` — tạo `MediaPlayer`, `setDataSource`, `prepareAsync`, `setOnPreparedListener` → `start()` + `startForeground`, `setOnCompletionListener` → **auto-advance** (nếu còn bài) hoặc dừng, `setOnErrorListener`.
-- `togglePlayPause()` / `isPlaying()` / `stopPlayback()` — Activity gọi.
-- `playFromUrl(url, title, artist)` — phát 1 bài đơn lẻ (xóa queue); **hiện tại không còn nơi nào gọi** (MainActivity mới đã chuyển sang `playQueue`) — đây là hàm thừa còn để lại.
-- `buildNotification(isPlaying)` — notification với nút Play/Pause + Stop (PendingIntent gửi `ACTION_*` về `onStartCommand`), bấm notification mở `MainActivity`.
+**Tại sao tách interface/impl?** ViewModel/Service chỉ phụ thuộc interface → dễ test (fake repo), dễ thay data source, đúng "Inversion of Control".
 
-**Auto-advance hoạt động ở đâu?** Trong `setOnCompletionListener`:
+### 2.7 `presenter/` — các màn hình & pattern `onState()`
+
+**`base/BasePlayerActivity.kt`** — lớp nền dùng chung cho 3 màn hình:
+- extends `IActivity<VB, VM, State>()` (→ template vòng đời).
+- `recentStore: RecentPlayedStore by inject()` (Koin).
+- `playbackController: PlaybackController by inject()` + cast `as MusicPlaybackController` để gán `.service`.
+- `bindPlayerService()/unbindPlayerService()` — bind/unbind MusicService.
+- `serviceConnection` — gán `onPlaybackStateChanged/onError/onSongChanged`; flush `pendingPlay` khi service sẵn sàng; gán `playbackImpl.service = musicService`.
+- `playQueue(songs, index)` — show mini player + `recentStore.add(song)` (Room) + `musicService?.playQueue(...)` hoặc `pendingPlay`.
+- `setupMiniPlayer()` — nút **Prev/PlayPause/Next**: play/pause → `playbackController.togglePlayPause()`; Next/Prev → hook `onNext()/onPrevious()` (Activity con override → `viewModel.onState(State.Next/Previous)`).
+
+**`home/HomeActivity.kt` + `HomeViewModel.kt`** (LAUNCHER):
+- `HomeViewModel : IViewModel<HomeState>` — constructor `(Application, MusicRepository, RecentPlayedStore, PlaybackController)`.
+- `init {}` gọi `observeRecentSongs()`, `observeFavorites()`, `observeSavedPlaylists()` (Room Flow) + `onState(HomeState.FetchFeaturedPlaylists)`.
+- `onState(HomeState)` xử lý: `FetchFeaturedPlaylists` → loadHome; `ToggleFavorite`; `ToggleSavePlaylist`; `Next`/`Previous`/`TogglePlayPause` → `playbackController`.
+- Activity: 5 section — Thể loại, Playlist nổi bật, **Playlist đã lưu**, Yêu thích, Nghe gần đây. Bấm bài → `playQueue(...)`. Nút bookmark → `onState(HomeState.ToggleSavePlaylist(playlist))`.
+
+**`songlist/SongListActivity.kt` + `PlaylistViewModel.kt`**:
+- `PlaylistViewModel : IViewModel<PlaylistState>` — xử lý `LoadPlaylist(id)` (mode playlist) và `SearchSongs(title, keyword)` (mode thể loại).
+- Activity: đọc `EXTRA_MODE/EXTRA_TITLE/EXTRA_ID` → `viewModel.onState(PlaylistState.LoadPlaylist/SearchSongs)`. Bấm bài → `playQueue(viewModel.songs.value, position)`.
+
+**`search/MainActivity.kt` + `MusicViewModel.kt`**:
+- ✅ Sau refactor: MainActivity **đã migrate sang Koin + BasePlayerActivity** (trước đây DI thủ công). Giờ giống Home/SongList: `playQueue(cả danh sách, vị trí)` — Service tự fetch URL & auto-advance.
+- `MusicViewModel : IViewModel<MusicState>` — `Search(query)` có **debounce 500ms** (`searchJob?.cancel()` + `delay(500)`), `ToggleFavorite`.
+- Đã bỏ luồng cũ `playSong()/streamUrl` (Service tự lo URL).
+
+**Sealed class State — khai báo CUỐI file ViewModel** (đúng convention mẫu):
 ```kotlin
-setOnCompletionListener {
-    if (generation != playbackGeneration) return@setOnCompletionListener
-    onPlaybackStateChanged?.invoke(false)
-    if (currentIndex + 1 < queue.size) {
-        currentIndex++
-        playCurrent()      // ← tự phát bài kế tiếp, kể cả khi app ở background
-    } else {
-        updateNotification(false)
-    }
+sealed class HomeState : IViewModel.IState {
+    data object FetchFeaturedPlaylists : HomeState()
+    data class ToggleFavorite(val song: SongItem) : HomeState()
+    data class ToggleSavePlaylist(val playlist: PlaylistItem) : HomeState()
+    data object Next : HomeState()
+    data object Previous : HomeState()
+    data object TogglePlayPause : HomeState()
 }
 ```
 
-**Xóa MusicService thì hỏng gì:** không phát được bất kỳ bài nào — cả 3 Activity đều `bindPlayerService()`/`bindService()`; mini player, notification, auto-advance đều chết.
+### 2.8 `service/` — trái tim phát nhạc
 
-### 2.7 `ui/` — các màn hình & luồng chuyển
+**`MusicService.kt`** — `class MusicService : Service(), KoinComponent, MediaStateProvider`:
+- **Vòng đời:** Bound (`onBind` → `MusicBinder`) + Foreground (`startForeground` khi phát, `foregroundServiceType="mediaPlayback"`); `onCreate` tạo NotificationChannel + `MediaSessionManager`; `onDestroy` hủy scope + release player.
+- **Hàng đợi:** `queue: List<SongItem>` + `currentIndex` → auto-advance.
+- **Các cờ chống lỗi MediaPlayer (quan trọng):**
+  - `isPrepared` — chỉ cho `start()` sau `onPrepared` (tránh lỗi `-38` "start called in state 4").
+  - `playbackGeneration` — tăng mỗi lần `playInternal`; callback player cũ (đã release) bị bỏ qua.
+  - `isSwitchingSong` — chặn bấm Next/Prev liên tục khi đang fetch URL (tránh lệch index).
+- **`onStartCommand`:** xử lý 6 action `ACTION_PLAY/PAUSE/PLAY_PAUSE/NEXT/PREVIOUS/STOP` + `Intent.ACTION_MEDIA_BUTTON` → `MediaButtonReceiver.handleIntent(mediaSessionManager.session, intent)`.
+- **Hàm chính:** `playQueue(songs, startIndex, preFetchedUrl?)`, `playCurrent()` (lấy URL qua `repository.getStreamUrl` trên `playbackScope`; **khi fail: log + onError + GIỮ nguyên bài cũ, không đệ quy nhảy bài**), `playInternal()` (tạo MediaPlayer + `prepareAsync` + listeners), `next()/previous()/play()/pause()/togglePlayPause()`, `stopPlayback()`.
+- **Auto-advance** trong `setOnCompletionListener`: `currentIndex++` → `playCurrent()` (kể cả app ở nền).
+- **`MediaStateProvider`** (implement): `isPlaying`, `getCurrentPositionMs`, `getDurationMs`, `getTitle`, `getArtist`, `getArtUrl`, `refreshNotification` — để `MediaSessionManager` đọc state mà không phụ thuộc class cụ thể.
 
-**`HomeActivity.kt`** (LAUNCHER — màn hình chính mới):
-- extends `BasePlayerActivity`; `homeViewModel: HomeViewModel by viewModel()` (Koin).
-- 3 section: **Thể loại** (`GenreAdapter` — cuộn ngang), **Playlist nổi bật** (`PlaylistAdapter` — cuộn ngang), **Nghe gần đây** (`RecentSongAdapter` — list dọc).
-- Bấm thể loại → `openSongList(title=genre.name, mode=MODE_SEARCH, id=genre.name)`.
-- Bấm playlist → `openSongList(title=playlist.title, mode=MODE_PLAYLIST, id=playlist.encodeId)`.
-- Bấm bài gần đây → `playQueue(homeViewModel.recentSongs.value, position)`.
-- Menu `R.id.action_search` → mở `MainActivity` (màn hình tìm kiếm cũ).
-- `onResume()` gọi `homeViewModel.loadRecent()` để cập nhật "Nghe gần đây" khi quay lại.
+**`MediaSessionManager.kt`** — đóng gói `MediaSessionCompat` + build notification **MediaStyle**:
+- `PlaybackStateCompat` (STATE_PLAYING/PAUSED) + actions `PLAY/PAUSE/PLAY_PAUSE/SKIP_TO_NEXT/SKIP_TO_PREVIOUS/STOP`.
+- Notification 3 nút **Prev · Play/Pause · Next**; load ảnh album bằng Glide (bitmap → large icon); vòng lặp 1s cập nhật position (progress lock screen).
+- Bấm thân notification → mở `MainActivity`. Bấm nút → route về `MusicService` qua MediaSession callback.
+- **Caller:** `MusicService.onCreate()`. **Callee:** `MediaStateProvider` (chính là MusicService).
 
-**`SongListActivity.kt`** (danh sách bài):
-- extends `BasePlayerActivity`; `playlistViewModel: PlaylistViewModel by viewModel()` (Koin).
-- Đọc `EXTRA_MODE/EXTRA_TITLE/EXTRA_ID` từ Intent.
-- `MODE_PLAYLIST` → `loadPlaylist(id)`; còn lại (SEARCH) → `setTitle(title)` + `searchSongs(id)`.
-- Bấm bài → `playQueue(playlistViewModel.songs.value, position)`.
+**`PlaybackController.kt`** (interface): `play()/pause()/togglePlayPause()/next()/previous()/isPlaying()`.
+**`MusicPlaybackController.kt`** (Koin `single`, implement): giữ `@Volatile var service: MusicService?` (Activity gán khi bind), mọi method ủy quyền xuống Service; service null → no-op an toàn. **Tại sao cần interface?** ViewModel không phụ thuộc trực tiếp Android Service → dễ test, dễ đổi engine (ExoPlayer).
 
-**`MainActivity.kt`** (màn hình tìm kiếm CŨ, DI thủ công):
-- `viewModel = ViewModelProvider(this)[MusicViewModel::class.java]` (không Koin).
-- Search bằng `TextWatcher` trên `etSearch` → `viewModel.search(...)`, có nút search trên bàn phím.
-- Observe 5 StateFlow; khi `streamUrl` có giá trị → tính `queue = viewModel.getCurrentQueue()` + `startIndex` → `musicService?.playQueue(queue, startIndex, preFetchedUrl = url)`; nếu service chưa bind xong → lưu `pendingUrl/pendingSong`, phát trong `onServiceConnected`.
-- Yêu cầu `POST_NOTIFICATIONS` (Android 13+).
+### 2.9 `adapter/` — 4 RecyclerView Adapter
 
-**`BasePlayerActivity.kt`** (lớp nền dùng chung cho màn hình mới):
-- `recentStore: RecentPlayedStore by inject()` (Koin).
-- `bindPlayerService()/unbindPlayerService()` — bind/unbind MusicService.
-- `serviceConnection` — gán `onPlaybackStateChanged`, `onError`, `onSongChanged` (cập nhật mini player khi auto-advance), flush `pendingPlay` khi service sẵn sàng.
-- `playQueue(songs, index)` — show mini player + `recentStore.add(song)` + gọi `musicService?.playQueue(...)` (hoặc `pendingPlay` nếu chưa bind).
-- `setupMiniPlayer()/showMiniPlayer(song)/updatePlayPauseIcon(isPlaying)`.
-
-**Luồng chuyển màn hình:**
-```
-HomeActivity ──(bấm thể loại/playlist)──► SongListActivity
-HomeActivity ──(bấm nút search trên toolbar)──► MainActivity (tìm kiếm)
-```
-- Home và SongList extends BasePlayerActivity → dùng chung service + mini player.
-- MainActivity độc lập (cũ).
-
-### 2.8 `adapter/` — 4 RecyclerView Adapter
-
-| Adapter | List | Khác biệt so với SongAdapter |
+| Adapter | List | Đặc điểm |
 |---|---|---|
-| `SongAdapter` | Bài hát (search/playlist) | `onItemClick(song, position)` |
-| `RecentSongAdapter` | Nghe gần đây | Thumbnail **tròn** (`CircleCrop`), có nút play nhỏ riêng |
-| `GenreAdapter` | Thể loại | Gradient nền tạo động (`GradientDrawable`), hiệu ứng `ScaleAnimation` khi bấm |
-| `PlaylistAdapter` | Playlist | Thumbnail bo góc, hiện `formatSongCount()` |
+| `SongAdapter` | Bài hát (search/playlist) | `onItemClick(song, position)` + **`onFavoriteClick`** + `updateFavorites(ids)` (icon tim, re-bind dòng thay đổi) |
+| `RecentSongAdapter` | Nghe gần đây / Yêu thích | Thumbnail tròn (`CircleCrop`), nút play nhỏ riêng |
+| `GenreAdapter` | Thể loại | Gradient nền tạo động, `ScaleAnimation` khi bấm |
+| `PlaylistAdapter` | Playlist nổi bật / Đã lưu | `onPlaylistClick` + **`onSaveClick`** (bookmark) + `updateSaved(ids)` (icon đầy/rỗng) |
 
-- Tất cả đều là **`ListAdapter` + `DiffUtil.ItemCallback`**:
-  - `areItemsTheSame` so theo `encodeId` (cùng 1 bài).
-  - `areContentsTheSame` so `==` (data class).
-  - → `submitList()` chỉ cập nhật item thay đổi, có animation, không nhấp nháy toàn bộ.
-- Click listener đặt trong `init {}` của ViewHolder (chỉ gán 1 lần, không gán lại mỗi lần bind — tối ưu).
+- Tất cả là `ListAdapter + DiffUtil.ItemCallback` (`areItemsTheSame` = encodeId, `areContentsTheSame` = `==`). Click listener đặt trong `init {}` (chỉ gán 1 lần).
 
-### 2.9 `model/` — các data class
+### 2.10 `model/` — data class (DTO)
 
 | File | Nội dung |
 |---|---|
-| `SearchResponse.kt` | `ApiResponse<T>` (generic wrapper: `success`, `data`, `error`) + `SongItem` (encodeId, title, artistsNames, thumbnail, thumbnailM, duration + `formatDuration()`) |
-| `StreamResponse.kt` | `StreamData` (`@SerializedName("128")` quality128, `"320"` quality320 + `getBestStreamUrl()` — ưu tiên 320, lọc "VIP") |
+| `SearchResponse.kt` | `ApiResponse<T>` (generic: `success`, `data`, `error`) + `SongItem` (encodeId, title, artistsNames, thumbnail, thumbnailM, duration + `formatDuration()`) |
+| `StreamResponse.kt` | `StreamData` (`@SerializedName("128"/"320")` + `getBestStreamUrl()` — ưu tiên 320, **lọc "VIP"**) |
 | `PlaylistResponse.kt` | `PlaylistData` (encodeId, title, thumbnail, thumbnailM, artistsNames, `songs`) |
-| `PlaylistItem.kt` | `PlaylistItem` cho card Home (encodeId, title, thumbnail, songCount + `formatSongCount()`) |
-| `GenreItem.kt` | Thể loại tĩnh + màu gradient (10 loại hardcode) |
-| `ChartResponse.kt` | `typealias ChartData = SongItem` (bảng xếp hạng tái dùng SongItem) |
+| `PlaylistItem.kt` | Card Home (encodeId, title, thumbnail, songCount + `formatSongCount()`) |
+| `GenreItem.kt` | 10 thể loại tĩnh + màu gradient |
+| `ChartResponse.kt` | `typealias ChartData = SongItem` |
 
-### 2.10 `server/index.js` — proxy Node.js
+### 2.11 `server/index.js` — proxy Node.js
 
-- Gói `zingmp3-api-full` xử lý việc ký request tới ZingMP3 (không thể gọi trực tiếp từ Android).
-- 5 endpoint (khớp 1-1 với `MusicApiService`):
-  - `GET /api/search?q=` → trả danh sách bài (metadata, **không** link mp3).
-  - `GET /api/song/:id/stream` → trả `{"128": url, "320": url}` — **lọc "VIP" → null** ở cả server lẫn app.
-  - `GET /api/chart` → bảng xếp hạng.
-  - `GET /api/playlist/:id` → chi tiết playlist + `songs`.
-  - `GET /api/playlists` → lấy từ `getTop100()`, gom tất cả section thành 1 list, giới hạn 20.
-- App gọi server qua `http://127.0.0.1:3000/` + **`adb reverse tcp:3000 tcp:3000`** (vì `10.0.2.2` không hoạt động với app process trên emulator này).
+- Gói `zingmp3-api-full` ký request tới ZingMP3 (không gọi trực tiếp từ Android được).
+- 5 endpoint khớp 1-1 `MusicApiService`; `GET /api/song/:id/stream` trả `{128, 320}` và **lọc "VIP" → null** (cả server lẫn app).
+- App gọi qua `http://127.0.0.1:3000/` + **`adb reverse tcp:3000 tcp:3000`** (10.0.2.2 không hoạt động trên emulator này).
 
 ---
 
 ## 3. Truy vết 1 luồng thực tế từ đầu đến cuối
 
-> **Luồng được chọn:** User mở app → bấm 1 **playlist** trên Home → xem danh sách bài → bấm 1 bài → nhạc phát → bài hết **tự động chuyển bài kế tiếp**.
-> Đây là luồng "full-stack" nhất, chạm vào mọi tầng + tính năng auto-advance.
+> **Luồng:** mở app → bấm playlist → chọn bài → phát → **Next** qua mini player → hết bài **auto-advance** → bookmark playlist.
 
-### Bước 0 — App khởi động (1 lần)
-1. Android khởi tạo `App` (khai báo `android:name=".App"` trong manifest) → `App.onCreate()` → `startKoin(...)` đăng ký 3 module. *(file: `App.kt`)*
+### Bước 0 — Khởi động
+1. Android khởi tạo `App` → `startKoin` đăng ký 4 module (lazy). *(App.kt)*
 
-### Bước 1 — HomeActivity tải playlist nổi bật
-2. Launcher mở `HomeActivity.onCreate()`: `setSupportActionBar`, `setupAdapters()`, `bindPlayerService()`, `setupMiniPlayer()`, `observeViewModel()`, `homeViewModel.loadHome()` + `loadRecent()`. *(file: `ui/HomeActivity.kt`)*
-3. `HomeViewModel.loadHome()` (trong `viewModelScope.launch`) → `repository.getFeaturedPlaylists()`. *(file: `viewmodel/HomeViewModel.kt`)*
-4. `MusicRepository.getFeaturedPlaylists()` → `apiService.getFeaturedPlaylists()` → Retrofit gửi `GET /api/playlists` → server `ZingMp3.getTop100()` gom 20 playlist → JSON. *(files: `repository/MusicRepository.kt`, `network/MusicApiService.kt`, `server/index.js`)*
-5. Retrofit/Gson convert JSON → `List<PlaylistItem>` → `Result.success(...)` → `HomeViewModel._featuredPlaylists.value = list`. *(file: `viewmodel/HomeViewModel.kt`)*
-6. `observeViewModel()` collect `featuredPlaylists` → `playlistAdapter.submitList(list)` → RecyclerView vẽ card playlist. *(file: `ui/HomeActivity.kt`)*
+### Bước 1 — Home tải dữ liệu
+2. Launcher mở `HomeActivity` → template `initViews()` (toolbar, adapters, `bindPlayerService()`, `setupMiniPlayer()`) + `initObservers()` (collect StateFlow). *(presenter/home/HomeActivity.kt)*
+3. `HomeViewModel.init {}`:
+   - `observeRecentSongs()/observeFavorites()/observeSavedPlaylists()` → collect **Room Flow** (tự cập nhật khi bảng đổi).
+   - `onState(HomeState.FetchFeaturedPlaylists)` → `loadHome()` → `repository.getFeaturedPlaylists()` → Retrofit → server → `_featuredPlaylists`. *(presenter/home/HomeViewModel.kt)*
+4. `initObservers()` collect `featuredPlaylists/recentSongs/favorites/savedPlaylists/savedPlaylistIds` → `adapter.submitList()` → UI vẽ. *(presenter/home/HomeActivity.kt)*
 
-### Bước 2 — Bấm playlist → mở SongListActivity
-7. User bấm card → `PlaylistAdapter.onPlaylistClick(playlist)` → `HomeActivity.openSongList(title, MODE_PLAYLIST, playlist.encodeId)` → `startActivity(Intent(... SongListActivity))`. *(files: `adapter/PlaylistAdapter.kt`, `ui/HomeActivity.kt`)*
-8. `SongListActivity.onCreate()` đọc `EXTRA_MODE = "playlist"`, `EXTRA_ID = encodeId` → `playlistViewModel.loadPlaylist(id)`. *(file: `ui/SongListActivity.kt`)*
-9. `PlaylistViewModel.loadPlaylist(id)` → `repository.getPlaylist(id)` → `GET /api/playlist/:id` → server trả `PlaylistData` → `_songs.value = playlist.songs` → adapter `submitList` → danh sách `SongItem` hiện lên. *(files: `viewmodel/PlaylistViewModel.kt`, `repository/MusicRepository.kt`, `server/index.js`)*
+### Bước 2 — Bấm playlist → SongListActivity
+5. Bấm card → `PlaylistAdapter.onPlaylistClick` → `openSongList(title, MODE_PLAYLIST, encodeId)` → `startActivity(SongListActivity)`. *(adapter/PlaylistAdapter.kt, presenter/home/HomeActivity.kt)*
+6. `SongListActivity.initViews()` đọc `EXTRA_MODE = "playlist"` → `viewModel.onState(PlaylistState.LoadPlaylist(id))`. *(presenter/songlist/SongListActivity.kt)*
+7. `PlaylistViewModel.loadPlaylist(id)` → `repository.getPlaylist(id)` → `GET /api/playlist/:id` → `_songs.value = playlist.songs` → adapter vẽ danh sách. *(presenter/songlist/PlaylistViewModel.kt, data/repository/MusicRepositoryImpl.kt)*
 
 ### Bước 3 — Bấm bài → playQueue
-10. User bấm 1 bài → `SongAdapter` `onItemClick(song, position)` → `SongListActivity` lambda `{ _, position -> playQueue(playlistViewModel.songs.value, position) }`. *(files: `adapter/SongAdapter.kt`, `ui/SongListActivity.kt`)*
-11. `BasePlayerActivity.playQueue(songs, index)`:
-    - `showMiniPlayer(song)` — mini player hiện title/artist/thumbnail ngay.
-    - `recentStore.add(song)` — ghi vào SharedPreferences (lịch sử nghe).
-    - Service đã bind? → `musicService?.playQueue(songs, index)`; chưa → `pendingPlay = songs to index`. *(file: `ui/BasePlayerActivity.kt`)*
+8. Bấm bài → `SongAdapter.onItemClick` → `playQueue(viewModel.songs.value, position)`:
+   - `showMiniPlayer(song)` — mini player hiện ngay.
+   - `recentStore.add(song)` — ghi Room (`recent_songs`) → Home tự cập nhật "Nghe gần đây".
+   - `musicService?.playQueue(songs, index)` (hoặc `pendingPlay` nếu chưa bind). *(presenter/base/BasePlayerActivity.kt)*
 
-### Bước 4 — MusicService nhận queue, phát bài
-12. `MusicService.playQueue(songs, startIndex)`:
-    - `queue = songs`, `currentIndex = startIndex`.
-    - `currentSong = song`, `onSongChanged?.invoke(song)` → BasePlayerActivity cập nhật mini player.
-    - `preFetchedUrl = null` (luồng này không có URL sẵn) → `playCurrent()`. *(file: `service/MusicService.kt`)*
-13. `playCurrent()`: `playbackScope.launch { repository.getStreamUrl(song.encodeId) }` → `GET /api/song/:id/stream` → `StreamData.getBestStreamUrl()` → URL mp3 (hoặc failure → bỏ qua bài, phát bài kế). *(files: `service/MusicService.kt`, `repository/MusicRepository.kt`)*
-14. `playInternal(url, title, artist)`:
+### Bước 4 — MusicService phát
+9. `MusicService.playQueue(songs, startIndex)` → set queue/index, `onSongChanged` → `playCurrent()`. *(service/MusicService.kt)*
+10. `playCurrent()`: `playbackScope.launch { repository.getStreamUrl(encodeId) }` → `StreamData.getBestStreamUrl()` → URL mp3. *(service/MusicService.kt, data/repository/MusicRepositoryImpl.kt)*
+11. `playInternal(url, title, artist)`:
     - `playbackGeneration++`; release player cũ; `isPrepared = false`.
-    - `MediaPlayer().apply { setDataSource(url); setOnPreparedListener {...}; setOnCompletionListener {...}; setOnErrorListener {...}; prepareAsync() }`.
-    - `onPrepared` (đã buffer xong): `isPrepared = true`; `start()`; `onPlaybackStateChanged(true)` (mini player icon → pause); `startForeground(NOTIFICATION_ID, buildNotification(true))`. *(file: `service/MusicService.kt`)*
+    - `MediaPlayer().apply { setDataSource; setOnPreparedListener; setOnCompletionListener; setOnErrorListener; prepareAsync() }`.
+    - `onPrepared` → `isPrepared = true`; `start()`; `startForeground`; `mediaSessionManager.updateMetadata()/updatePlaybackState()`. *(service/MusicService.kt)*
 
-### Bước 5 — Auto-advance khi bài hết
-15. Bài phát xong → `setOnCompletionListener`:
-    - `onPlaybackStateChanged(false)`.
-    - `currentIndex + 1 < queue.size` → `currentIndex++` → `playCurrent()` → lại `getStreamUrl` bài kế → `playInternal` → **bài mới tự phát** (nhạc không dừng giữa chừng).
-    - `onSongChanged(songMoi)` → BasePlayerActivity `showMiniPlayer` → mini player + notification đổi sang bài mới.
-    - Nếu hết danh sách → `updateNotification(false)`. *(file: `service/MusicService.kt`)*
-16. User bấm play/pause trên mini player → `BasePlayerActivity.setupMiniPlayer()` → `musicService?.togglePlayPause()` → kiểm tra `isPrepared` rồi `player.pause()/start()`. *(files: `ui/BasePlayerActivity.kt`, `service/MusicService.kt`)*
+### Bước 5 — Next/Prev + auto-advance
+12. Bấm **Next** mini player → `onNext()` → `viewModel.onState(HomeState.Next)` → `playbackController.next()` → `MusicService.next()` → `currentIndex++` → `playCurrent()`. *(presenter/base/BasePlayerActivity.kt → presenter/home/HomeViewModel.kt → service/MusicPlaybackController.kt → service/MusicService.kt)*
+13. Bấm **Next** trên notification → MediaSession callback `onSkipToNext` → `service.next()` (đường đi khác nhưng cùng đích).
+14. Bài hết → `setOnCompletionListener` → `currentIndex++` → `playCurrent()` (auto-advance, chạy cả khi app nền) → `onSongChanged` → mini player + notification đổi bài.
 
-**Tóm tắt dữ liệu biến đổi qua từng bước:**
-```
-PlaylistItem (JSON card) → PlaylistData.songs: List<SongItem> → queue: List<SongItem> + index
-→ encodeId → GET stream → StreamData{128,320} → String url mp3 → MediaPlayer (setDataSource) → âm thanh
-```
+### Bước 6 — Bookmark playlist (Phần 3)
+15. Bấm bookmark trên card → `PlaylistAdapter.onSaveClick` → `viewModel.onState(HomeState.ToggleSavePlaylist(playlist))` → `repository.toggleSavePlaylist()` → `PlaylistDao` (Room) → Room Flow emit → section "Playlist đã lưu" + icon đầy. *(adapter/PlaylistAdapter.kt → presenter/home/HomeViewModel.kt → data/repository/MusicRepositoryImpl.kt → data/local/dao/PlaylistDao.kt)*
 
-**Số file tham gia:** `HomeActivity` → `HomeViewModel` → `MusicRepository` → `MusicApiService` → server → (ngược) → `SongListActivity` → `PlaylistViewModel` → `SongAdapter` → `BasePlayerActivity` → `MusicService` → `MusicRepository` → `MediaPlayer`. (≈ 10 file + server.)
-
-> Nếu bị hỏi luồng **tìm kiếm**: MainActivity `etSearch` → `MusicViewModel.search(q)` (debounce 500ms) → `repository.searchSongs(q)` → `GET /api/search` → `_songs` → adapter hiện kết quả → bấm bài → `viewModel.playSong(song)` → `_streamUrl` → MainActivity observe → `musicService?.playQueue(viewModel.getCurrentQueue(), startIndex, preFetchedUrl=url)`. Khác bản mới ở chỗ: màn hình cũ tự fetch URL trước rồi truyền cho service; màn hình mới để service tự fetch.
+**Biến đổi dữ liệu:** `PlaylistItem → PlaylistData.songs: List<SongItem> → queue + index → encodeId → GET stream → StreamData{128,320} → url mp3 → MediaPlayer → âm thanh`. Song song: `SongItem → RecentSongEntity (Room) → Flow → UI`.
 
 ---
 
 ## 4. Điểm cần lưu ý khi bảo vệ đồ án
 
-### 4.1 Những đoạn code "dễ bị hỏi" + cách trả lời ngắn gọn
+### 4.1 Những đoạn code "dễ bị hỏi" + trả lời ngắn gọn
 
 | Nếu giám khảo hỏi | Trả lời gọn |
 |---|---|
-| **Tại sao có `isPrepared`?** | MediaPlayer báo lỗi `-38 (INVALID_OPERATION)` nếu gọi `start()` khi đang buffer (state PREPARING). `isPrepared` chỉ cho phép start sau `onPrepared`. Nếu bấm play/pause sớm thì bỏ qua lượt bấm — bài vẫn tự phát khi prepare xong. |
-| **Tại sao có `playbackGeneration`?** | Khi bấm liên tục 2 bài, player cũ vừa release vẫn có thể gửi callback (onPrepared/onCompletion) muộn → sẽ gọi `start()` trên instance đã hỏng. Mỗi lần phát bài mới tăng biến này; callback nào có generation cũ thì bị bỏ qua. |
-| **Vì sao Service lại tự gọi `MusicRepository`?** | Vì auto-advance chạy khi app ở background — Activity có thể đã bị hủy, không còn ai lấy URL bài kế. Service tự fetch nên nhạc chạy liên tục kể cả khóa màn hình. Koin `KoinComponent` + `by inject()` để service có repository. |
-| **Vì sao là Foreground + Bound Service?** | Bound (Binder) để Activity gọi method trực tiếp; Foreground để Android 8+ không giết service, phát nhạc được ở background. Kèm `FOREGROUND_SERVICE_MEDIA_PLAYBACK` trong manifest. |
-| **Tại sao `prepareAsync()` thay vì `prepare()`?** | `prepare()` chặn main thread khi tải/giải mã file lớn → ANR. `prepareAsync()` chạy nền, xong mới gọi `onPrepared`. |
-| **Tại sao dùng `adb reverse` + `127.0.0.1` thay vì `10.0.2.2`?** | Trên emulator này `10.0.2.2` không kết nối được từ app process (dù shell vẫn ping được). `adb reverse tcp:3000 tcp:3000` chuyển port 3000 của device về host, nên gọi `127.0.0.1:3000` là tới server. |
-| **Tại sao bật `usesCleartextTraffic="true"`?** | Android 9+ chặn HTTP (cleartext) mặc định. Server dev chỉ có HTTP, nên bật cờ này. Khi deploy HTTPS (Render) thì không ảnh hưởng. |
-| **Tại sao phải lọc chuỗi "VIP" ở cả 2 nơi?** | ZingMP3 trả chữ `"VIP"` (không phải null) cho bài trả phí. Nếu để nguyên, MediaPlayer sẽ cố mở file tên "VIP" → `FileNotFoundException` crash. Lọc ở server (biến thành null) + ở app (`getBestStreamUrl()` kiểm tra `!= "VIP"`) cho chắc. |
-| **Tại sao dùng `Result<T>` trong Repository?** | Bọc exception lại, ViewModel xử lý bằng `onSuccess/onFailure` rõ ràng, không phải try-catch rải rác. |
-| **Tại sao dùng `StateFlow` thay `LiveData`?** | Kotlin-native, luôn có giá trị khởi tạo, dùng chung hệ coroutine, dễ kết hợp operator. |
-| **Tại sao `repeatOnLifecycle(STARTED)`?** | Chỉ collect StateFlow khi Activity ở STARTED trở lên, tự dừng khi ở background — tiết kiệm tài nguyên, tránh cập nhật UI khi không nhìn thấy. |
-| **Tại sao `pendingPlay`/`pendingUrl`?** | User có thể bấm bài trước khi Service bind xong (`musicService == null`). Lưu lại để phát ngay khi `onServiceConnected` — nếu không, thao tác bị nuốt mất. |
-| **Tại sao ViewModel không giữ Context?** | ViewModel sống lâu hơn Activity; giữ Activity/Context gây memory leak. `RecentPlayedStore` lấy `androidContext()` (Application context) từ Koin — an toàn. |
+| **Tại sao có base class `common/`?** | Gộp phần lặp lại (template vòng đời, loading, launch coroutine, onState) về 1 chỗ → mọi màn hình nhất quán, ít code trùng. Học từ project mẫu. |
+| **Pattern `onState()` là gì?** | UI không gọi hàm ViewModel trực tiếp mà gửi 1 sealed-class State (`viewModel.onState(HomeState.Next)`); ViewModel dùng `when(state)` quyết định xử lý. Tách biệt "ý định" và "logic", dễ mở rộng (thêm State là thêm case). |
+| **Vì sao `IViewModel` extends `AndroidViewModel`?** | Cần `Application` cho các tiện ích `toast()/string()` và để Koin bơm `get()` đầu tiên. |
+| **Tại sao Repository tách interface (domain) + impl (data)?** | ViewModel/Service chỉ phụ thuộc interface → dễ test (fake repo), dễ đổi data source, Koin `singleOf(::Impl) bind Interface` đúng DI. |
+| **Vì sao có `isPrepared`?** | MediaPlayer lỗi `-38` nếu `start()` khi đang buffer. `isPrepared` chỉ cho start sau `onPrepared`; bấm sớm thì bỏ qua, bài tự phát khi xong. |
+| **Tại sao có `playbackGeneration`?** | Bấm liên tục 2 bài → player cũ vừa release vẫn gửi callback muộn → gọi start trên instance hỏng. Mỗi lần phát bài mới tăng biến; callback generation cũ bị bỏ qua. |
+| **Tại sao có `isSwitchingSong`?** | Chặn bấm Next/Prev liên tục khi đang fetch URL → tránh 2 coroutine fetch song song làm lệch `currentIndex`. |
+| **Vì sao Service tự gọi `MusicRepository`?** | Auto-advance chạy khi app ở nền — Activity có thể đã chết. Service tự fetch URL bài kế nên nhạc chạy liên tục. Koin `KoinComponent` + `by inject()`. |
+| **Vì sao ViewModel không giữ Service mà giữ `PlaybackController`?** | ViewModel chỉ cần "biết cách next/prev/play/pause", không cần Service cụ thể. Interface → dễ test, dễ đổi engine; tránh phụ thuộc Android Service. |
+| **Vì sao Foreground + Bound?** | Bound (Binder) để Activity gọi method trực tiếp; Foreground để Android 8+ không giết service khi ở background. |
+| **Tại sao `prepareAsync()`?** | `prepare()` chặn main thread khi tải file lớn → ANR. `prepareAsync()` chạy nền, xong gọi `onPrepared`. |
+| **Vì sao dùng Room thay SharedPreferences?** | Room trả `Flow<>` (UI tự cập nhật khi bảng đổi — single source of truth), query SQL, chống trùng bằng PK, scale tốt hơn. |
+| **Vì sao có `Migration` 1→2?** | Khi thêm bảng mới phải tăng `version` + viết Migration để **giữ dữ liệu cũ**. Nếu chỉ tăng version không Migration → Room crash (hoặc mất data nếu fallback destructive). |
+| **Vì sao có `Mapper<Entity, Model>`?** | Entity là bảng SQLite (có field riêng như `playedAt/savedAt`), Model là DTO API. Mapper tách việc chuyển đổi ra khỏi entity → entity sạch, dễ test. |
+| **Tại sao dùng `adb reverse` + 127.0.0.1 thay vì 10.0.2.2?** | Trên emulator này 10.0.2.2 không kết nối được từ app process. `adb reverse tcp:3000 tcp:3000` chuyển port device → host. |
+| **Tại sao lọc "VIP" ở cả 2 nơi?** | ZingMP3 trả chữ `"VIP"` (không null) cho bài trả phí → nếu không lọc, MediaPlayer mở file tên "VIP" → crash. Lọc server + app cho chắc. |
+| **Tại sao dùng `Result<T>` trong Repository?** | Bọc exception, ViewModel dùng `onSuccess/onFailure` rõ ràng, không try-catch rải rác. |
+| **Tại sao StateFlow thay LiveData?** | Kotlin-native, luôn có giá trị khởi tạo, dùng chung hệ coroutine, dễ kết hợp operator. |
+| **Tại sao `repeatOnLifecycle(STARTED)`?** | Chỉ collect khi Activity STARTED+, tự dừng khi background → tiết kiệm tài nguyên, tránh cập nhật UI khi không nhìn thấy. |
+| **Tại sao `pendingPlay`?** | User có thể bấm bài trước khi Service bind xong → lưu lại, phát ngay khi `onServiceConnected`. |
 
-### 4.2 Điểm yếu THẬT của code hiện tại (nói thật để bạn chủ động)
+### 4.2 Điểm yếu THẬT của code hiện tại (nói thật — tạo điểm cộng)
 
-1. **2 cách tạo Retrofit song song:** `network/RetrofitClient.kt` (object) và `di/NetworkModule.kt` (Koin) — **BASE_URL bị khai báo 2 lần**. Nếu sửa URL phải sửa cả 2. Đây là hệ quả của việc "giữ bản cũ để so sánh trước/sau Koin".
-2. **BASE_URL hardcode `http://127.0.0.1:3000/`:** chỉ chạy trên emulator có `adb reverse`. Cài lên máy thật sẽ không kết nối được; chưa có cơ chế đổi server.
-3. **`MainActivity` + `MusicViewModel` vẫn dùng DI thủ công:** `ViewModelProvider` + tự `new MusicRepository()`. Code chạy tốt nhưng **không nhất quán** với Koin, và khó test hơn.
-4. **`playFromUrl()` trong MusicService hiện không còn nơi nào gọi** — hàm "chết" còn để lại (MainActivity mới đã chuyển sang `playQueue`). Giám khảo tinh ý có thể hỏi; trả lời: "hàm giữ cho màn hình cũ, nhưng hiện mọi nơi đã dùng playQueue".
-5. **Không xử lý `AudioFocus`:** nếu có app khác phát nhạc/cuộc gọi đến, app không tự pause. (MediaPlayer thuần, chưa request audio focus.)
-6. **Notification không dùng `MediaStyle`** (chủ ý tránh thêm dependency `androidx.media`): nên **không có** ảnh nghệ sĩ trên màn hình khóa, không có thanh seek, không xử lý media button (tai nghe). Các nút Play/Pause/Stop vẫn hoạt động bình thường.
-7. **Không dùng ExoPlayer:** MediaPlayer đủ dùng cho mp3 đơn giản, nhưng không có adaptive streaming, buffering control, gapless, tiết kiệm pin kém hơn.
-8. **"Nghe gần đây" lưu JSON toàn bộ vào SharedPreferences:** OK với ≤20 bài, nhưng không scale được như Room/DataStore. Chưa có database.
-9. **Thể loại nhạc hardcode** trong `GenreItem.all` và **bấm thể loại = search theo tên** → kết quả phụ thuộc chất lượng tìm kiếm (ví dụ "R&B" có thể ít bài hơn). Đây là workaround vì ZingMP3 không có API "liệt kê thể loại" kiểu card.
-10. **Chưa có shuffle / repeat / next-prev thủ công** trên mini player — chỉ có auto-advance theo thứ tự list.
-11. **`currentQueue` trong `MusicViewModel` chỉ chụp danh sách tại thời điểm bấm phát:** nếu user search từ khóa khác trong lúc đang phát, queue không tự cập nhật (chỉ phát tiếp theo danh sách cũ). Đây là hành vi có chủ đích nhưng có thể bị hỏi.
-12. **Chưa có unit test / UI test thật** (chỉ test mặc định của template). Khi được hỏi, nói thẳng: "chưa viết test, đây là việc cải thiện tiếp theo".
-13. **Khi auto-advance fetch URL thất bại**, service chỉ "bỏ qua bài" mà không thông báo cho user (chỉ gọi `onError`). Có thể thêm retry/countdown.
+1. **`network/RetrofitClient.kt` là dead code** — sau refactor không file nào gọi `RetrofitClient.apiService` nữa (mọi thứ qua Koin). Nên xóa; hiện giữ lại như "bản so sánh". BASE_URL chỉ còn 1 chỗ trong `NetworkModule.kt`.
+2. **BASE_URL hardcode `http://127.0.0.1:3000/`** — chỉ chạy được trên emulator có `adb reverse`; máy thật phải đổi URL.
+3. **Chưa xử lý AudioFocus** — cuộc gọi đến / app khác phát nhạc thì app không tự pause.
+4. **Chưa dùng ExoPlayer** — MediaPlayer đủ cho mp3 đơn giản nhưng không adaptive streaming, buffering control, gapless.
+5. **Thể loại nhạc hardcode** trong `GenreItem.all`; bấm thể loại = search theo tên → kết quả phụ thuộc chất lượng search.
+6. **Chưa có shuffle / repeat** — chỉ có next/prev theo thứ tự + auto-advance hết list là dừng (không lặp).
+7. **Chưa có unit test / UI test** — nói thẳng "chưa viết test, đây là việc cải thiện tiếp".
+8. **`playFromUrl()` trong `MusicService` không còn nơi nào gọi** (mọi màn hình đã dùng `playQueue`) — hàm chết còn để lại.
+9. **Room version tăng tiếp phải viết Migration mới** — nếu quên sẽ crash khi nâng cấp trên máy có dữ liệu cũ.
+10. **`onState` dùng một chiều** — chưa có xử lý "one-shot event" (như `Channel` trong mẫu) cho các thông báo 1 lần; hiện dùng StateFlow + `errorMessage`.
 
-> Mẹo: nếu bị hỏi điểm yếu, **đừng giấu** — nói thẳng 2-3 điểm trên và đề xuất hướng sửa (Room cho recents, MediaSession, ExoPlayer, AudioFocus, thêm test). Điều đó tạo điểm cộng "biết đánh giá code của mình".
+> Mẹo: nếu bị hỏi điểm yếu, đừng giấu — nói thẳng 2-3 điểm và đề xuất hướng sửa (xóa RetrofitClient, thêm AudioFocus, shuffle/repeat, test). Điều đó tạo điểm cộng "biết đánh giá code của mình".
 
 ---
 
 ## 5. Từ khóa cần nhớ khi bảo vệ (glossary nhanh)
 
-- **MVVM**: Model – View – ViewModel. View (Activity) hiển thị, ViewModel giữ state, Model là data.
-- **StateFlow**: luồng state luôn có giá trị hiện tại; dùng `asStateFlow()` để không cho bên ngoài ghi.
-- **viewModelScope**: CoroutineScope tự hủy khi ViewModel bị destroy → không leak coroutine.
+- **MVVM**: Model – View – ViewModel. View hiển thị, ViewModel giữ state + logic, Model là data.
+- **Clean Architecture rút gọn**: `common/` (base) · `domain/` (interface) · `data/` (impl) · `presenter/` (UI).
+- **Base class / template method**: `IActivity`/`IViewModel` — lớp cha định sẵn khung, lớp con chỉ điền phần riêng.
+- **Pattern `onState()` (Command)**: UI gửi sealed-class State; ViewModel `when(state)` xử lý.
+- **Sealed class `*State`**: khai báo cuối file ViewModel, implement `IViewModel.IState`.
+- **`singleOf(::Impl) bind Interface::class`**: Koin — đăng ký impl nhưng inject theo interface.
+- **StateFlow**: luồng state luôn có giá trị hiện tại; `asStateFlow()` không cho bên ngoài ghi.
+- **viewModelScope**: CoroutineScope tự hủy khi ViewModel bị destroy.
 - **repeatOnLifecycle(STARTED)**: collect an toàn theo vòng đời.
-- **ListAdapter + DiffUtil**: tự so sánh list cũ/mới (`areItemsTheSame`, `areContentsTheSame`) → chỉ render phần thay đổi.
-- **ViewBinding**: `ActivityXBinding.inflate(...)` thay `findViewById` — type-safe.
-- **Retrofit**: thư viện biến interface Kotlin thành HTTP client (Proxy pattern); `suspend fun` → chạy nền.
-- **OkHttp interceptor**: chèn vào chuỗi request/response (dùng để log).
-- **Repository Pattern**: ViewModel không biết data từ đâu; đổi data source không đụng ViewModel.
+- **ListAdapter + DiffUtil**: so list cũ/mới → chỉ render phần thay đổi.
+- **ViewBinding**: `ActivityXBinding.inflate(...)` — type-safe, thay `findViewById`.
+- **Retrofit**: interface Kotlin → HTTP client (Proxy pattern); `suspend fun` chạy nền.
+- **Repository Pattern**: interface (domain) + impl (data); ViewModel không biết data từ đâu.
+- **Room**: ORM trên SQLite; `@Entity` (bảng), `@Dao` (truy vấn), `@Database` (khai báo), `Flow` query (tự cập nhật), `Migration` (nâng cấp giữ data).
+- **Mapper<Entity, Model>**: chuyển Entity ↔ Model.
 - **Result<T>**: bọc giá trị hoặc exception.
 - **Koin**: DI container; `module{}` khai báo công thức; `single{}` (1 instance), `viewModel{}` (gắn vòng đời Activity), `get()` (lấy dependency), `by inject()`/`by viewModel()` (bơm vào), `KoinComponent` (cho class không phải Activity như Service).
-- **DI / Inversion of Control**: class khai báo "tôi cần gì", không tự tạo; ai đó (Koin) đưa vào.
+- **DI / Inversion of Control**: class khai báo "tôi cần gì", không tự tạo; Koin đưa vào.
 - **Bound Service + Binder**: Activity lấy reference service để gọi method.
-- **Foreground Service + startForeground**: chạy nền lâu dài với notification, không bị hệ thống giết.
+- **Foreground Service + startForeground**: chạy nền lâu dài với notification, không bị giết.
 - **START_NOT_STICKY**: service bị kill không tự restart.
-- **MediaPlayer**: `prepareAsync`/`onPrepared` (buffer nền), `setOnCompletionListener` (hết bài), `setOnErrorListener`, `release()` (giải phóng tài nguyên).
+- **MediaPlayer**: `prepareAsync`/`onPrepared`, `setOnCompletionListener`, `setOnErrorListener`, `release()`.
+- **MediaSessionCompat**: cầu nối giữa app và hệ thống (lock screen, tai nghe, notification).
+- **MediaStyle notification**: notification media có nút Prev/PlayPause/Next.
+- **PlaybackController (interface)**: ViewModel điều khiển nhạc mà không phụ thuộc Service.
 - **PendingIntent**: intent "đóng gói" gửi sau (notification button → service).
-- **SharedPreferences**: lưu cặp key-value nhỏ, persist qua các lần mở app.
-- **adb reverse**: chuyển port thiết bị → host (giúp app gọi server local).
-- **Cleartext HTTP**: Android chặn HTTP mặc định từ API 28; bật `usesCleartextTraffic`.
+- **KSP**: chạy Room compiler lúc build (sinh code `@Dao`/`@Database`).
+- **adb reverse**: chuyển port thiết bị → host.
+- **Cleartext HTTP**: Android chặn HTTP từ API 28; bật `usesCleartextTraffic`.
 
 ---
 
-*File này được tạo từ việc đọc toàn bộ code thật trong project (2026-08-18). Nếu sửa code, hãy cập nhật lại file này cho khớp.*
+*File này được viết lại từ việc đọc toàn bộ code thật trong project (2026-08-19, sau refactor Phần 3 theo project MẪU DIYWallpaper_Kotlin). Nếu sửa code, hãy cập nhật lại file này cho khớp.*

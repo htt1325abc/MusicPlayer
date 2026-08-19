@@ -9,10 +9,9 @@ import java.util.concurrent.TimeUnit
 /**
  * Singleton tạo Retrofit instance.
  *
- * TẠI SAO dùng object (Singleton)?
- * → Chỉ cần 1 instance Retrofit trong toàn app
- * → Tái sử dụng connection pool của OkHttp → tiết kiệm tài nguyên
- * → Tránh tạo nhiều instance gây memory leak
+ * ⚠️ LƯU Ý: File này HIỆN KHÔNG còn được dùng — Retrofit thật do Koin tạo trong
+ * `di/NetworkModule.kt`. Giữ lại chỉ để tham khảo cấu hình + đảm bảo đồng bộ
+ * nếu sau này có chỗ gọi `RetrofitClient.apiService`.
  */
 object RetrofitClient {
 
@@ -27,7 +26,9 @@ object RetrofitClient {
     //   Lệnh này chuyển port 3000 của DEVICE về port 3000 của HOST qua adb daemon
     //   → app gọi http://127.0.0.1:3000/ là tới được server trên máy phát triển.
     // → Khi deploy lên Render, chỉ cần đổi 1 dòng dưới đây sang URL https.
-    private const val BASE_URL = "http://127.0.0.1:3000/"
+    //
+    // 🆕 2026-08-19: App ĐÃ CHUYỂN sang Jamendo API công khai (không cần server local)
+    //   → Base URL + client_id lấy từ JamendoConfig.
 
     /**
      * OkHttpClient với logging interceptor.
@@ -41,6 +42,14 @@ object RetrofitClient {
         }
 
         OkHttpClient.Builder()
+            // Tự động thêm client_id vào mọi request (giống NetworkModule)
+            .addInterceptor { chain ->
+                val original = chain.request()
+                val url = original.url.newBuilder()
+                    .addQueryParameter("client_id", JamendoConfig.CLIENT_ID)
+                    .build()
+                chain.proceed(original.newBuilder().url(url).build())
+            }
             .addInterceptor(loggingInterceptor)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
@@ -52,7 +61,7 @@ object RetrofitClient {
      */
     private val retrofit: Retrofit by lazy {
         Retrofit.Builder()
-            .baseUrl(BASE_URL)
+            .baseUrl(JamendoConfig.BASE_URL)
             .client(okHttpClient)
             // GsonConverterFactory tự convert JSON ↔ Kotlin data class
             .addConverterFactory(GsonConverterFactory.create())

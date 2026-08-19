@@ -41,10 +41,10 @@ class MusicRepositoryImpl(
     override suspend fun searchSongs(query: String): Result<List<SongItem>> {
         return try {
             val response = apiService.searchSongs(query)
-            if (response.success && response.data != null) {
-                Result.success(response.data)
+            if (response.isSuccess) {
+                Result.success(response.results)
             } else {
-                Result.failure(Exception(response.error ?: "Không tìm thấy kết quả"))
+                Result.failure(Exception(response.headers.error_message ?: "Không tìm thấy kết quả"))
             }
         } catch (e: Exception) {
             Result.failure(Exception("Lỗi mạng: ${e.localizedMessage}"))
@@ -53,29 +53,38 @@ class MusicRepositoryImpl(
 
     override suspend fun getStreamUrl(songId: String): Result<String> {
         return try {
-            val response = apiService.getStreamUrl(songId)
-            if (response.success && response.data != null) {
-                val url = response.data.getBestStreamUrl()
-                if (url != null) {
-                    Result.success(url)
-                } else {
-                    Result.failure(Exception("Bài hát VIP, không phát được miễn phí"))
-                }
+            // Jamendo trả URL stream ngay trong field `audio` của track
+            // (KHÔNG còn khái niệm VIP / map {"128":..., "320":...} như ZingMP3).
+            // ⚠️ Một số track KHÔNG có bản mp32 → Jamendo trả danh sách RỖNG
+            // (không phải lỗi HTTP) → phải fallback về mp31 (96kbps, mọi track đều có).
+            val audioUrl = fetchAudioUrl(songId, "mp32") ?: fetchAudioUrl(songId, "mp31")
+            if (!audioUrl.isNullOrBlank()) {
+                Result.success(audioUrl)
             } else {
-                Result.failure(Exception(response.error ?: "Không lấy được link nhạc"))
+                Result.failure(Exception("Bài hát không có link phát"))
             }
         } catch (e: Exception) {
             Result.failure(Exception("Lỗi mạng: ${e.localizedMessage}"))
         }
     }
 
+    /**
+     * Gọi tracks/?id=<songId>&audioformat=<format>, trả URL audio nếu tìm thấy.
+     * Trả null khi request fail hoặc danh sách rỗng (track không có bản format đó).
+     */
+    private suspend fun fetchAudioUrl(songId: String, format: String): String? {
+        val response = apiService.getStreamUrl(songId, audioFormat = format)
+        if (!response.isSuccess) return null
+        return response.results.firstOrNull()?.audio?.takeIf { it.isNotBlank() }
+    }
+
     override suspend fun getChart(): Result<List<ChartData>> {
         return try {
             val response = apiService.getChart()
-            if (response.success && response.data != null) {
-                Result.success(response.data)
+            if (response.isSuccess) {
+                Result.success(response.results)
             } else {
-                Result.failure(Exception(response.error ?: "Không tải được bảng xếp hạng"))
+                Result.failure(Exception(response.headers.error_message ?: "Không tải được bảng xếp hạng"))
             }
         } catch (e: Exception) {
             Result.failure(Exception("Lỗi mạng: ${e.localizedMessage}"))
@@ -85,10 +94,25 @@ class MusicRepositoryImpl(
     override suspend fun getPlaylist(playlistId: String): Result<PlaylistData> {
         return try {
             val response = apiService.getPlaylistDetail(playlistId)
-            if (response.success && response.data != null) {
-                Result.success(response.data)
+            if (response.isSuccess) {
+                val playlist = response.results.firstOrNull()
+                if (playlist != null) {
+                    // Track trong /albums/tracks KHÔNG có artist_name/image
+                    // → điền fallback từ thông tin ALBUM (artist_name, image) nếu thiếu
+                    val songs = playlist.songs.map { song ->
+                        song.copy(
+                            artistsNames = if (song.artistsNames.isNullOrBlank())
+                                playlist.artistsNames ?: "" else song.artistsNames,
+                            thumbnail = song.thumbnail ?: playlist.thumbnail,
+                            thumbnailM = song.thumbnailM ?: playlist.thumbnail
+                        )
+                    }
+                    Result.success(playlist.copy(songs = songs))
+                } else {
+                    Result.failure(Exception("Không tìm thấy playlist"))
+                }
             } else {
-                Result.failure(Exception(response.error ?: "Không tìm thấy playlist"))
+                Result.failure(Exception(response.headers.error_message ?: "Không tìm thấy playlist"))
             }
         } catch (e: Exception) {
             Result.failure(Exception("Lỗi mạng: ${e.localizedMessage}"))
@@ -98,10 +122,12 @@ class MusicRepositoryImpl(
     override suspend fun getFeaturedPlaylists(): Result<List<PlaylistItem>> {
         return try {
             val response = apiService.getFeaturedPlaylists()
-            if (response.success && response.data != null) {
-                Result.success(response.data)
+            if (response.isSuccess) {
+                // Lọc bỏ playlist tên trống (dữ liệu Jamendo đôi khi có playlist
+                // không đặt tên → UI Home hiện thẻ trống xấu xí).
+                Result.success(response.results.filter { it.title.isNotBlank() })
             } else {
-                Result.failure(Exception(response.error ?: "Không tải được playlist"))
+                Result.failure(Exception(response.headers.error_message ?: "Không tải được playlist"))
             }
         } catch (e: Exception) {
             Result.failure(Exception("Lỗi mạng: ${e.localizedMessage}"))

@@ -235,7 +235,19 @@ class MusicService : Service(), KoinComponent, MediaStateProvider {
         // Cờ chặn bấm liên tiếp → chỉ 1 lần fetch URL tại 1 thời điểm
         isSwitchingSong = true
 
-        // Lấy URL ở background; có kết quả mới phát (tránh block main thread)
+        // ✅ Ưu tiên dùng URL audio ĐÃ CÓ SẴN trong SongItem:
+        // Jamendo trả `audio` ngay trong track (albums/tracks, search) → KHÔNG cần
+        // gọi lại /tracks/?id= như ZingMP3. Tránh 1 request thừa VÀ tránh lỗi flaky
+        // khi endpoint tracks/?id= đôi khi trả danh sách RỖNG (đã gặp 2026-08-19).
+        val preFetchedUrl = song.audio?.takeIf { it.isNotBlank() }
+        if (preFetchedUrl != null) {
+            playInternal(preFetchedUrl, song.title, song.artistsNames)
+            isSwitchingSong = false
+            return
+        }
+
+        // Fallback: bài từ Room (favorites/recent — audio = null vì Room không lưu)
+        // → fetch URL ở background; có kết quả mới phát (tránh block main thread)
         val generation = playbackGeneration
         playbackScope.launch {
             try {
