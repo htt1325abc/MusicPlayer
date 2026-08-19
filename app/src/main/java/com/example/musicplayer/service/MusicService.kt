@@ -8,6 +8,7 @@ import android.media.MediaPlayer
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.media.session.MediaButtonReceiver
 import com.example.musicplayer.model.SongItem
 import com.example.musicplayer.repository.MusicRepository
@@ -40,6 +41,9 @@ import org.koin.core.component.inject
 class MusicService : Service(), KoinComponent, MediaStateProvider {
 
     companion object {
+        // Tag dùng chung để lọc logcat: `adb logcat -s MusicService`
+        private const val TAG = "MusicService"
+
         const val CHANNEL_ID = "music_playback_channel"
         const val NOTIFICATION_ID = 1
 
@@ -103,6 +107,13 @@ class MusicService : Service(), KoinComponent, MediaStateProvider {
     //   → nếu không lọc, player cũ gọi start() trên instance đã release → crash
     private var playbackGeneration = 0
 
+    // Cờ chặn bấm Next/Previous LIÊN TỤC trong lúc đang fetch URL bài mới.
+    // TẠI SAO cần? → bấm 2 lần quá nhanh, 2 coroutine fetch URL chạy song song
+    //   → player chỉ nhận kết quả của lần đầu, lần sau bị playbackGeneration chặn
+    //   → currentIndex đã tăng 2 nhưng nhạc chỉ chuyển 1 bài → mất đồng bộ.
+    @Volatile
+    private var isSwitchingSong = false
+
     // Callback để thông báo Activity khi trạng thái thay đổi
     var onPlaybackStateChanged: ((Boolean) -> Unit)? = null
     var onError: ((String) -> Unit)? = null
@@ -145,14 +156,32 @@ class MusicService : Service(), KoinComponent, MediaStateProvider {
      * Xử lý intent từ notification buttons (Play/Pause, Stop)
      */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Log mọi action nhận được → debug nút notification có tới đây không
+        Log.d(TAG, "onStartCommand: action=${intent?.action}")
         when (intent?.action) {
             // Nút bấm từ notification: Play / Pause / Next / Previous
-            ACTION_PLAY -> play()
-            ACTION_PAUSE -> pause()
-            ACTION_PLAY_PAUSE -> togglePlayPause()
-            ACTION_NEXT -> next()
-            ACTION_PREVIOUS -> previous()
+            ACTION_PLAY -> {
+                Log.d(TAG, "→ play()")
+                play()
+            }
+            ACTION_PAUSE -> {
+                Log.d(TAG, "→ pause()")
+                pause()
+            }
+            ACTION_PLAY_PAUSE -> {
+                Log.d(TAG, "→ togglePlayPause()")
+                togglePlayPause()
+            }
+            ACTION_NEXT -> {
+                Log.d(TAG, "→ next()")
+                next()
+            }
+            ACTION_PREVIOUS -> {
+                Log.d(TAG, "→ previous()")
+                previous()
+            }
             ACTION_STOP -> {
+                Log.d(TAG, "→ stopPlayback()")
                 stopPlayback()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -203,28 +232,37 @@ class MusicService : Service(), KoinComponent, MediaStateProvider {
         currentSong = song
         onSongChanged?.invoke(song)
 
+        // Cờ chặn bấm liên tiếp → chỉ 1 lần fetch URL tại 1 thời điểm
+        isSwitchingSong = true
+
         // Lấy URL ở background; có kết quả mới phát (tránh block main thread)
         val generation = playbackGeneration
         playbackScope.launch {
-            repository.getStreamUrl(song.encodeId)
-                .onSuccess { url ->
-                    // Bỏ qua nếu user đã chọn bài khác trong lúc buffer
-                    if (generation == playbackGeneration) {
-                        playInternal(url, song.title, song.artistsNames)
+            try {
+                repository.getStreamUrl(song.encodeId)
+                    .onSuccess { url ->
+                        // Bỏ qua nếu user đã chọn bài khác trong lúc buffer
+                        if (generation == playbackGeneration) {
+                            playInternal(url, song.title, song.artistsNames)
+                        }
                     }
-                }
-                .onFailure { error ->
-                    onError?.invoke(error.message ?: "Không lấy được link nhạc")
-                    // Tự bỏ qua bài lỗi (VIP/hết link) → phát bài tiếp theo
-                    if (currentIndex + 1 < queue.size) {
-                        currentIndex++
-                        playCurrent()
-                    } else {
-                        onPlaybackStateChanged?.invoke(false)
+                    .onFailure { error ->
+                        // ⚠️ BUG CŨ ĐÃ SỬA: trước đây lỗi mạng sẽ đệ quy
+                        //   `currentIndex++; playCurrent()` — chạy qua CẢ danh sách,
+                        //   bài nào cũng fetch fail → nhạc KHÔNG đổi, notification KHÔNG đổi,
+                        //   còn currentIndex nhảy về cuối list → bấm Next sau đó no-op vĩnh viễn.
+                        // → giờ: báo lỗi rõ ràng, GIỮ NGUYÊN bài đang phát, không dịch index.
+                        Log.e(TAG, "playCurrent() FAILED [${song.title}]: ${error.message}")
+                        onError?.invoke(error.message ?: "Không lấy được link nhạc")
+                        // Đồng bộ lại trạng thái + notification (bài cũ vẫn đang phát)
+                        onPlaybackStateChanged?.invoke(mediaPlayer?.isPlaying == true)
                         mediaSessionManager.updatePlaybackState()
                         refreshNotification()
                     }
-                }
+            } finally {
+                // Luôn nhả cờ để lần bấm sau được xử lý
+                isSwitchingSong = false
+            }
         }
     }
 
@@ -385,9 +423,17 @@ class MusicService : Service(), KoinComponent, MediaStateProvider {
      * PlaybackController.next() → ủy quyền vào đây.
      */
     fun next() {
+        Log.d(TAG, "next(): currentIndex=$currentIndex queue.size=${queue.size}")
+        // Chặn bấm liên tục trong lúc đang fetch URL bài mới
+        if (isSwitchingSong) {
+            Log.d(TAG, "next(): bỏ qua — đang chuyển bài")
+            return
+        }
         if (currentIndex + 1 < queue.size) {
             currentIndex++
             playCurrent()
+        } else {
+            Log.d(TAG, "next(): đã ở bài cuối, không có bài tiếp")
         }
     }
 
@@ -396,9 +442,16 @@ class MusicService : Service(), KoinComponent, MediaStateProvider {
      * PlaybackController.previous() → ủy quyền vào đây.
      */
     fun previous() {
+        Log.d(TAG, "previous(): currentIndex=$currentIndex queue.size=${queue.size}")
+        if (isSwitchingSong) {
+            Log.d(TAG, "previous(): bỏ qua — đang chuyển bài")
+            return
+        }
         if (currentIndex - 1 >= 0) {
             currentIndex--
             playCurrent()
+        } else {
+            Log.d(TAG, "previous(): đã ở bài đầu, không có bài trước")
         }
     }
 

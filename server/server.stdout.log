@@ -1,0 +1,7 @@
+🎵 MusicPlayer Server đang chạy tại http://localhost:3000
+📡 Endpoints:
+   GET /api/search?q=keyword
+   GET /api/song/:id/stream
+   GET /api/chart
+   GET /api/playlist/:id
+   GET /api/playlists
