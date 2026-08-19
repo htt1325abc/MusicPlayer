@@ -13,11 +13,37 @@ import com.example.musicplayer.databinding.ItemPlaylistBinding
 import com.example.musicplayer.model.PlaylistItem
 
 /**
- * PlaylistAdapter — RecyclerView cuộn ngang cho section "Playlist nổi bật".
+ * PlaylistAdapter — RecyclerView cuộn ngang cho section "Playlist nổi bật"
+ * và "Playlist đã lưu" (PHẦN 3 - Room).
+ *
+ * @param onPlaylistClick callback khi bấm vào card → mở danh sách bài hát.
+ * @param onSaveClick callback khi bấm nút bookmark (btnSave) → lưu/bỏ lưu playlist.
  */
 class PlaylistAdapter(
-    private val onPlaylistClick: (PlaylistItem) -> Unit
+    private val onPlaylistClick: (PlaylistItem) -> Unit,
+    private val onSaveClick: (PlaylistItem) -> Unit
 ) : ListAdapter<PlaylistItem, PlaylistAdapter.PlaylistViewHolder>(PlaylistDiffCallback()) {
+
+    // Tập id playlist đã lưu — Activity cập nhật khi StateFlow đổi (Room)
+    private val savedIds = mutableSetOf<String>()
+
+    /**
+     * Cập nhật tập playlist đã lưu từ ViewModel (Room Flow).
+     * Đổi icon bookmark (đầy/rỗng) trên các dòng có trạng thái thay đổi.
+     */
+    fun updateSaved(ids: Set<String>) {
+        if (savedIds == ids) return
+        val oldIds = savedIds.toSet()
+        savedIds.clear()
+        savedIds.addAll(ids)
+
+        val changedIds = oldIds union ids
+        for (i in 0 until itemCount) {
+            if (getItem(i).encodeId in changedIds) {
+                notifyItemChanged(i)
+            }
+        }
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PlaylistViewHolder {
         val binding = ItemPlaylistBinding.inflate(
@@ -41,11 +67,23 @@ class PlaylistAdapter(
                     onPlaylistClick(getItem(position))
                 }
             }
+            binding.btnSave.setOnClickListener {
+                val position = bindingAdapterPosition
+                if (position != RecyclerView.NO_POSITION) {
+                    onSaveClick(getItem(position))
+                }
+            }
         }
 
         fun bind(playlist: PlaylistItem) {
             binding.tvPlaylistTitle.text = playlist.title
             binding.tvPlaylistCount.text = playlist.formatSongCount()
+
+            // Icon bookmark: đầy = đã lưu, rỗng = chưa lưu
+            binding.btnSave.setImageResource(
+                if (playlist.encodeId in savedIds) R.drawable.ic_bookmark
+                else R.drawable.ic_bookmark_border
+            )
 
             // Glide load ảnh bìa playlist — bo góc 16dp cho khớp card
             Glide.with(binding.root.context)

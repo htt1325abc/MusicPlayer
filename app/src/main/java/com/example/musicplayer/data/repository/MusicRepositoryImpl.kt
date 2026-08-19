@@ -1,8 +1,10 @@
-package com.example.musicplayer.repository
+package com.example.musicplayer.data.repository
 
 import com.example.musicplayer.data.local.dao.FavoriteSongDao
-import com.example.musicplayer.data.local.entity.toFavoriteSongEntity
-import com.example.musicplayer.data.local.entity.toSongItem
+import com.example.musicplayer.data.local.dao.PlaylistDao
+import com.example.musicplayer.data.local.mapper.FavoriteSongMapper
+import com.example.musicplayer.data.local.mapper.PlaylistMapper
+import com.example.musicplayer.domain.repository.MusicRepository
 import com.example.musicplayer.model.ChartData
 import com.example.musicplayer.model.PlaylistData
 import com.example.musicplayer.model.PlaylistItem
@@ -12,39 +14,31 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 /**
- * Repository Pattern — lớp trung gian giữa ViewModel và Network.
+ * MusicRepositoryImpl — IMPLEMENTATION của [MusicRepository], nằm ở tầng `data/`
+ * (giống project MẪU: interface ở domain, impl ở data).
  *
- * TẠI SAO cần Repository?
- * → ViewModel không nên biết data đến từ đâu (API, cache, database...)
- * → Repository đóng gói logic gọi API + xử lý lỗi
- * → Dễ thay đổi data source sau này (ví dụ: thêm Room cache) mà không sửa ViewModel
- * → Trả Result<T> để ViewModel xử lý success/failure một cách rõ ràng
+ * TẠI SAO là constructor-injected (nhận dependency từ Koin)?
+ * → Repository KHÔNG tự quyết định lấy dependency ở đâu — Koin bơm qua `get()`:
+ *     - `apiService`        (networkModule) — gọi Retrofit.
+ *     - `favoriteSongDao`   (Room) — yêu thích.
+ *     - `playlistDao`       (Room) — playlist đã lưu.
+ *     - `favoriteMapper` / `playlistMapper` — chuyển Entity ↔ Model.
  *
- * TẠI SAO dùng Result<T>?
- * → Kotlin built-in, bọc success value HOẶC exception
- * → Thay vì try-catch rải khắp ViewModel, tập trung xử lý lỗi tại đây
- * → ViewModel chỉ cần: result.getOrNull() hoặc result.exceptionOrNull()
- *
- * ⚠️ THAY ĐỔI KHI ÁP DỤNG KOIN (PHẦN B):
- * → Trước: `private val apiService = RetrofitClient.apiService` (tự lấy singleton cũ)
- * → Sau : Constructor nhận dependency từ bên ngoài (Koin truyền vào qua `get()`).
- *   Repository KHÔNG CÒN tự quyết định lấy dependency ở đâu — bên gọi quyết định.
- *   Đây chính là "Inversion of Control" (Đảo ngược điều khiển) của DI.
- *
- * ⚠️ PHẦN 2 (Room):
- * → Thêm `favoriteSongDao` → Repository vừa gọi API (network) vừa đọc/ghi Room (local).
- * → Yêu thích là dữ liệu local → lưu thẳng vào Room, không cần mạng.
+ * TẠI SAO dùng Result<T> cho network?
+ * → Kotlin built-in, bọc success value HOẶC exception → ViewModel chỉ cần
+ *   `result.getOrNull()` hoặc `onSuccess/onFailure`.
  */
-class MusicRepository(
+class MusicRepositoryImpl(
     private val apiService: MusicApiService,
-    private val favoriteSongDao: FavoriteSongDao
-) {
+    private val favoriteSongDao: FavoriteSongDao,
+    private val playlistDao: PlaylistDao,
+    private val favoriteMapper: FavoriteSongMapper,
+    private val playlistMapper: PlaylistMapper
+) : MusicRepository {
 
-    /**
-     * Tìm kiếm bài hát theo keyword.
-     * Trả Result<List<SongItem>> — success = danh sách bài, failure = exception
-     */
-    suspend fun searchSongs(query: String): Result<List<SongItem>> {
+    // ============ NETWORK (Retrofit) ============
+
+    override suspend fun searchSongs(query: String): Result<List<SongItem>> {
         return try {
             val response = apiService.searchSongs(query)
             if (response.success && response.data != null) {
@@ -53,16 +47,11 @@ class MusicRepository(
                 Result.failure(Exception(response.error ?: "Không tìm thấy kết quả"))
             }
         } catch (e: Exception) {
-            // Bắt mọi lỗi mạng: timeout, no internet, server down...
             Result.failure(Exception("Lỗi mạng: ${e.localizedMessage}"))
         }
     }
 
-    /**
-     * Lấy link stream mp3 của bài hát.
-     * Trả Result<String> — success = URL mp3, failure = exception
-     */
-    suspend fun getStreamUrl(songId: String): Result<String> {
+    override suspend fun getStreamUrl(songId: String): Result<String> {
         return try {
             val response = apiService.getStreamUrl(songId)
             if (response.success && response.data != null) {
@@ -70,7 +59,6 @@ class MusicRepository(
                 if (url != null) {
                     Result.success(url)
                 } else {
-                    // Bài VIP không có link mp3 miễn phí
                     Result.failure(Exception("Bài hát VIP, không phát được miễn phí"))
                 }
             } else {
@@ -81,10 +69,7 @@ class MusicRepository(
         }
     }
 
-    /**
-     * Lấy bảng xếp hạng nhạc thịnh hành.
-     */
-    suspend fun getChart(): Result<List<ChartData>> {
+    override suspend fun getChart(): Result<List<ChartData>> {
         return try {
             val response = apiService.getChart()
             if (response.success && response.data != null) {
@@ -97,10 +82,7 @@ class MusicRepository(
         }
     }
 
-    /**
-     * Lấy chi tiết playlist/album.
-     */
-    suspend fun getPlaylist(playlistId: String): Result<PlaylistData> {
+    override suspend fun getPlaylist(playlistId: String): Result<PlaylistData> {
         return try {
             val response = apiService.getPlaylistDetail(playlistId)
             if (response.success && response.data != null) {
@@ -113,10 +95,7 @@ class MusicRepository(
         }
     }
 
-    /**
-     * Lấy danh sách playlist nổi bật cho màn hình Home (mới - PHẦN A).
-     */
-    suspend fun getFeaturedPlaylists(): Result<List<PlaylistItem>> {
+    override suspend fun getFeaturedPlaylists(): Result<List<PlaylistItem>> {
         return try {
             val response = apiService.getFeaturedPlaylists()
             if (response.success && response.data != null) {
@@ -129,22 +108,17 @@ class MusicRepository(
         }
     }
 
-    // ============================================================
-    // PHẦN 2 — ĐỌC/GHI ROOM: DANH SÁCH YÊU THÍCH
-    // ============================================================
+    // ============ LOCAL — YÊU THÍCH (Room) ============
 
     /**
      * Quan sát danh sách bài yêu thích (mới thêm trước).
      * Room trả [Flow] → ViewModel collect 1 lần, UI tự cập nhật khi bảng đổi.
      */
-    fun observeFavorites(): Flow<List<SongItem>> =
+    override fun observeFavorites(): Flow<List<SongItem>> =
         favoriteSongDao.observeAll()
-            .map { entities -> entities.map { it.toSongItem() } }
+            .map { entities -> entities.map(favoriteMapper::toModel) }
 
-    /**
-     * Kiểm tra 1 bài đã yêu thích chưa (để hiển thị icon trái tim đúng trạng thái).
-     */
-    suspend fun isFavorite(songId: String): Boolean =
+    override suspend fun isFavorite(songId: String): Boolean =
         favoriteSongDao.getById(songId) != null
 
     /**
@@ -152,11 +126,37 @@ class MusicRepository(
      * - Chưa thích → thêm vào bảng favorite_songs.
      * - Đã thích → xóa khỏi bảng.
      */
-    suspend fun toggleFavorite(song: SongItem) {
+    override suspend fun toggleFavorite(song: SongItem) {
         if (favoriteSongDao.getById(song.encodeId) != null) {
             favoriteSongDao.deleteById(song.encodeId)
         } else {
-            favoriteSongDao.insert(song.toFavoriteSongEntity(addedAt = System.currentTimeMillis()))
+            favoriteSongDao.insert(favoriteMapper.toEntity(song))
+        }
+    }
+
+    // ============ LOCAL — PLAYLIST ĐÃ LƯU (Room) ============
+
+    /**
+     * Quan sát danh sách playlist đã lưu (lưu gần nhất trước).
+     * Flow → section "Đã lưu" trên Home tự cập nhật khi user lưu/bỏ lưu.
+     */
+    override fun observeSavedPlaylists(): Flow<List<PlaylistItem>> =
+        playlistDao.observeAll()
+            .map { entities -> entities.map(playlistMapper::toModel) }
+
+    override suspend fun isSavedPlaylist(playlistId: String): Boolean =
+        playlistDao.getById(playlistId) != null
+
+    /**
+     * Bật/tắt lưu 1 playlist:
+     * - Chưa lưu → thêm vào bảng saved_playlists (kèm savedAt = now qua mapper).
+     * - Đã lưu → xóa khỏi bảng.
+     */
+    override suspend fun toggleSavePlaylist(playlist: PlaylistItem) {
+        if (playlistDao.getById(playlist.encodeId) != null) {
+            playlistDao.deleteById(playlist.encodeId)
+        } else {
+            playlistDao.insert(playlistMapper.toEntity(playlist))
         }
     }
 }

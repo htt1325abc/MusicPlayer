@@ -4,7 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import com.example.musicplayer.data.local.entity.FavoriteSongEntity
+import com.example.musicplayer.data.local.entities.FavoriteSongEntity
 import kotlinx.coroutines.flow.Flow
 
 /**

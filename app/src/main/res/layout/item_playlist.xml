@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Item playlist nổi bật (card cuộn ngang): ảnh vuông bo góc + tên + số bài -->
+<!-- Item playlist (card cuộn ngang): ảnh vuông bo góc + nút lưu bookmark + tên + số bài.
+     PHẦN 3: thêm btnSave (icon bookmark) nằm GÓC TRÊN-PHẢI của ảnh bìa,
+     bấm để lưu/bỏ lưu playlist vào Room (saved_playlists). -->
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
@@ -18,15 +20,33 @@
         android:orientation="vertical"
         android:padding="8dp">
 
-        <!-- Ảnh bìa playlist (vuông, bo góc) -->
-        <com.google.android.material.imageview.ShapeableImageView
-            android:id="@+id/ivPlaylistThumb"
+        <!-- Ảnh bìa playlist + nút lưu bookmark chồng lên góc (FrameLayout = lớp chồng) -->
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="134dp"
-            android:contentDescription="Ảnh playlist"
-            android:scaleType="centerCrop"
-            android:src="@drawable/ic_music_note"
-            app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Medium" />
+            android:layout_height="134dp">
+
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/ivPlaylistThumb"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:contentDescription="Ảnh playlist"
+                android:scaleType="centerCrop"
+                android:src="@drawable/ic_music_note"
+                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Medium" />
+
+            <!-- Nút lưu/bỏ lưu playlist (PHẦN 3) -->
+            <ImageButton
+                android:id="@+id/btnSave"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_gravity="top|end"
+                android:layout_margin="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Lưu playlist"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_bookmark_border" />
+
+        </FrameLayout>
 
         <!-- Tên playlist -->
         <TextView

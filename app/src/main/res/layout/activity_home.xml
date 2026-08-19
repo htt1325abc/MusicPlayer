@@ -126,6 +126,49 @@
                 app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
                 tools:listitem="@layout/item_playlist" />
 
+            <!-- ===== Section: Playlist đã lưu (PHẦN 3 - Room) ===== -->
+            <LinearLayout
+                android:id="@+id/tvSavedPlaylistsHeader"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_marginTop="20dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_bookmark" />
+
+                <TextView
+                    style="@style/TextAppearance.Material3.TitleMedium"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="Playlist đã lưu"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <!-- Danh sách playlist đã lưu (cuộn ngang) — hiện/ẩn theo Room Flow -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvSavedPlaylists"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clipToPadding="false"
+                android:orientation="horizontal"
+                android:overScrollMode="never"
+                android:paddingStart="16dp"
+                android:paddingEnd="4dp"
+                android:visibility="gone"
+                app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+                tools:listitem="@layout/item_playlist"
+                tools:visibility="visible" />
+
             <!-- ===== Section 4: Yêu thích (PHẦN 2 - Room) ===== -->
             <LinearLayout
                 android:id="@+id/tvFavoritesHeader"

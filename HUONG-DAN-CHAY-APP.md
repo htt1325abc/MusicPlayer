@@ -125,7 +125,7 @@ Kết quả mong đợi: thấy dòng `host-15 tcp:3000 tcp:3000`.
 
 ```powershell
 $sdk = "C:\Users\LENOVO\AppData\Local\Android\Sdk"
-& "$sdk\platform-tools\adb.exe" shell am start -n com.example.musicplayer/.ui.HomeActivity
+& "$sdk\platform-tools\adb.exe" shell am start -n com.example.musicplayer/.presenter.home.HomeActivity
 ```
 
 App sẽ mở trên emulator. Kiểm tra hoạt động:
@@ -135,7 +135,7 @@ App sẽ mở trên emulator. Kiểm tra hoạt động:
 
 Kết quả mong đợi (app đang ở foreground):
 ```
-mCurrentFocus=Window{... com.example.musicplayer/com.example.musicplayer.ui.HomeActivity}
+mCurrentFocus=Window{... com.example.musicplayer/com.example.musicplayer.presenter.home.HomeActivity}
 ```
 
 Kiểm tra app còn sống (không crash):
@@ -154,7 +154,7 @@ Kiểm tra app còn sống (không crash):
 | 2 | `npm run dev` (trong `server/`) | giữ terminal mở |
 | 3 | `adb reverse tcp:3000 tcp:3000` | bắt buộc sau restart emulator |
 | 4 | `.\gradlew.bat :app:installDebug` | build + cài |
-| 5 | `adb shell am start -n com.example.musicplayer/.ui.HomeActivity` | chạy app |
+| 5 | `adb shell am start -n com.example.musicplayer/.presenter.home.HomeActivity` | chạy app |
 
 ---
 

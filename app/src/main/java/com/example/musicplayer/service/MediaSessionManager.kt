@@ -13,8 +13,8 @@ import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import androidx.media.app.NotificationCompat.MediaStyle
 import com.bumptech.glide.Glide
-import com.example.musicplayer.MainActivity
 import com.example.musicplayer.R
+import com.example.musicplayer.presenter.search.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

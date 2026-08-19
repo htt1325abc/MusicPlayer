@@ -1,9 +1,10 @@
-package com.example.musicplayer.viewmodel
+package com.example.musicplayer.presenter.songlist
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
 import androidx.lifecycle.viewModelScope
+import com.example.musicplayer.common.IViewModel
+import com.example.musicplayer.domain.repository.MusicRepository
 import com.example.musicplayer.model.SongItem
-import com.example.musicplayer.repository.MusicRepository
 import com.example.musicplayer.service.PlaybackController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -11,79 +12,83 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 
 /**
  * PlaylistViewModel — quản lý danh sách bài hát của 1 màn hình danh sách.
  *
- * Màn hình này được DÙNG LẠI cho 2 trường hợp (PHẦN A):
- * 1. Bấm vào 1 playlist → load bằng `loadPlaylist(playlistId)`
- * 2. Bấm vào 1 thể loại  → load bằng `searchSongs(genreName)` (search theo tên)
+ * DI CHUYỂN từ `viewmodel/` → `presenter/songlist/` (cùng package với SongListActivity)
+ * và ĐỔI sang kế thừa [IViewModel] + pattern `onState()` — đúng convention project MẪU.
  *
- * Cũng dùng Koin inject `MusicRepository` qua constructor như HomeViewModel.
- * PHẦN 1: thêm `PlaybackController` để UI gọi next()/previous() xuống Service.
+ * Màn hình này được DÙNG LẠI cho 2 trường hợp:
+ * 1. Bấm vào 1 playlist → PlaylistState.LoadPlaylist(playlistId)
+ * 2. Bấm vào 1 thể loại  → PlaylistState.SearchSongs(title, keyword)
  */
 class PlaylistViewModel(
+    application: Application,
     private val repository: MusicRepository,
     private val playbackController: PlaybackController
-) : ViewModel() {
+) : IViewModel<PlaylistState>(application) {
 
     // ---- State: Danh sách bài hát ----
     private val _songs = MutableStateFlow<List<SongItem>>(emptyList())
-    val songs: StateFlow<List<SongItem>> = _songs.asStateFlow()
+    internal val songs = _songs.asStateFlow()
 
     // ---- State: Tiêu đề màn hình (tên playlist hoặc thể loại) ----
     private val _title = MutableStateFlow<String?>(null)
-    val title: StateFlow<String?> = _title.asStateFlow()
+    internal val title = _title.asStateFlow()
 
-    // ---- State: Yêu thích (PHẦN 2: từ ROOM) ----
+    // ---- State: Yêu thích (Room) ----
     private val _favorites = MutableStateFlow<List<SongItem>>(emptyList())
-    val favoriteIds: StateFlow<Set<String>> = _favorites
+    internal val favoriteIds: StateFlow<Set<String>> = _favorites
         .map { list -> list.map { it.encodeId }.toSet() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
-    // ---- State: Loading / Lỗi ----
-    private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
-
+    // ---- State: Lỗi ----
     private val _errorMessage = MutableStateFlow<String?>(null)
-    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+    internal val errorMessage = _errorMessage.asStateFlow()
 
     init {
-        // Quan sát danh sách yêu thích từ Room → cập nhật icon trái tim trên từng dòng
         observeFavorites()
     }
 
+    /**
+     * Pattern COMMAND — UI gửi State, ViewModel quyết định xử lý.
+     */
+    override fun onState(state: PlaylistState) {
+        when (state) {
+            is PlaylistState.LoadPlaylist -> loadPlaylist(state.playlistId)
+            is PlaylistState.SearchSongs -> {
+                _title.value = state.title
+                searchSongs(state.keyword)
+            }
+            is PlaylistState.ToggleFavorite -> toggleFavorite(state.song)
+            // Next/Previous/TogglePlayPause → PlaybackController → MusicService (PHẦN 1)
+            PlaylistState.Next -> playbackController.next()
+            PlaylistState.Previous -> playbackController.previous()
+            PlaylistState.TogglePlayPause -> playbackController.togglePlayPause()
+        }
+    }
+
     private fun observeFavorites() {
-        viewModelScope.launch {
+        launchBlock {
             repository.observeFavorites().collect { list ->
                 _favorites.value = list
             }
         }
     }
 
-    /**
-     * Bật/tắt yêu thích 1 bài (ghi vào Room qua repository).
-     */
-    fun toggleFavorite(song: SongItem) {
-        viewModelScope.launch {
+    private fun toggleFavorite(song: SongItem) {
+        launchBlock {
             repository.toggleFavorite(song)
         }
     }
 
-    // ---- Điều khiển phát nhạc (PHẦN 1) ----
-    fun next() = playbackController.next()
-
-    fun previous() = playbackController.previous()
-
-    fun togglePlayPause() = playbackController.togglePlayPause()
-
     /**
      * Tải danh sách bài hát trong 1 playlist.
      */
-    fun loadPlaylist(playlistId: String) {
-        viewModelScope.launch {
-            _isLoading.value = true
+    private fun loadPlaylist(playlistId: String) {
+        launchBlock {
+            setLoading(true)
             _errorMessage.value = null
             repository.getPlaylist(playlistId)
                 .onSuccess { playlist ->
@@ -96,16 +101,16 @@ class PlaylistViewModel(
                 .onFailure { error ->
                     _errorMessage.value = error.message
                 }
-            _isLoading.value = false
+            setLoading(false)
         }
     }
 
     /**
      * Tải bài hát theo từ khóa (dùng cho thể loại — search theo tên thể loại).
      */
-    fun searchSongs(keyword: String) {
-        viewModelScope.launch {
-            _isLoading.value = true
+    private fun searchSongs(keyword: String) {
+        launchBlock {
+            setLoading(true)
             _errorMessage.value = null
             repository.searchSongs(keyword)
                 .onSuccess { list ->
@@ -117,14 +122,19 @@ class PlaylistViewModel(
                 .onFailure { error ->
                     _errorMessage.value = error.message
                 }
-            _isLoading.value = false
+            setLoading(false)
         }
     }
+}
 
-    /**
-     * Set tiêu đề màn hình (khi vào từ thể loại — chưa biết tên playlist).
-     */
-    fun setTitle(title: String) {
-        _title.value = title
-    }
+/**
+ * Sealed class State của màn hình danh sách bài hát — khai báo cuối file.
+ */
+sealed class PlaylistState : IViewModel.IState {
+    data class LoadPlaylist(val playlistId: String) : PlaylistState()
+    data class SearchSongs(val title: String, val keyword: String) : PlaylistState()
+    data class ToggleFavorite(val song: SongItem) : PlaylistState()
+    data object Next : PlaylistState()
+    data object Previous : PlaylistState()
+    data object TogglePlayPause : PlaylistState()
 }

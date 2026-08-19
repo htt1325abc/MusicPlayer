@@ -32,9 +32,9 @@
              → Khi deploy lên Render (HTTPS) thì không ảnh hưởng, vẫn an toàn
              → LƯU Ý: với production nên dùng network_security_config.xml thay vì bật toàn bộ
         -->
-        <!-- HomeActivity — màn hình chính MỚI, là LAUNCHER -->
+        <!-- HomeActivity — màn hình chính (LAUNCHER), ở presenter/home/ -->
         <activity
-            android:name=".ui.HomeActivity"
+            android:name=".presenter.home.HomeActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -43,16 +43,16 @@
             </intent-filter>
         </activity>
 
-        <!-- MainActivity — màn hình TÌM KIẾM (bản cũ, DI thủ công để so sánh).
+        <!-- MainActivity — màn hình TÌM KIẾM, ở presenter/search/.
              Không còn là launcher, được mở từ nút search trên Home. -->
         <activity
-            android:name=".MainActivity"
+            android:name=".presenter.search.MainActivity"
             android:exported="true"
             android:windowSoftInputMode="adjustResize" />
 
-        <!-- SongListActivity — danh sách bài hát (playlist / thể loại) -->
+        <!-- SongListActivity — danh sách bài hát (playlist / thể loại), ở presenter/songlist/ -->
         <activity
-            android:name=".ui.SongListActivity"
+            android:name=".presenter.songlist.SongListActivity"
             android:exported="false" />
 
         <!-- MusicService — phát nhạc nền với notification -->
